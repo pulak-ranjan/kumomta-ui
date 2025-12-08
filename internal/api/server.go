@@ -90,7 +90,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/logs/dovecot", s.handleLogsDovecot)
 		r.Get("/api/logs/fail2ban", s.handleLogsFail2ban)
 	})
-
+	
+    fileServer := http.FileServer(http.Dir("./web/dist"))
+    r.Handle("/*", fileServer)
+	
 	return r
 }
 
