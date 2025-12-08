@@ -40,6 +40,13 @@ type BounceAccount struct {
 	Notes        string                       // optional description
 }
 
+type AdminUser struct {
+    ID           uint      `gorm:"primaryKey"`
+    Email        string    `gorm:"uniqueIndex"`
+    PasswordHash string
+    APIToken     string    `gorm:"index"`
+    TokenExpiry  time.Time // ADD THIS
+}
 // A sender identity associated with a domain
 // (Generic: can be ANYTHING)
 type Sender struct {
