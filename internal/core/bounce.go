@@ -10,11 +10,12 @@ import (
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 )
 
-// EnsureBounceAccount makes sure a system user exists for the given bounce account,
-// sets its password, and creates Maildir structure.
-func EnsureBounceAccount(acc models.BounceAccount) error {
-	if acc.Username == "" || acc.Password == "" {
-		return fmt.Errorf("username and password required")
+// EnsureBounceAccount makes sure a system user exists for the given bounce account.
+// If plainPassword is non-empty, it sets/updates the system password.
+// It always ensures Maildir structure exists.
+func EnsureBounceAccount(acc models.BounceAccount, plainPassword string) error {
+	if acc.Username == "" {
+		return fmt.Errorf("username is required")
 	}
 
 	// Check if user exists: id -u username
@@ -27,11 +28,13 @@ func EnsureBounceAccount(acc models.BounceAccount) error {
 		}
 	}
 
-	// Set password via chpasswd
-	chpasswd := exec.Command("chpasswd")
-	chpasswd.Stdin = bytes.NewBufferString(fmt.Sprintf("%s:%s\n", acc.Username, acc.Password))
-	if out, err := chpasswd.CombinedOutput(); err != nil {
-		return fmt.Errorf("chpasswd failed: %v, output: %s", err, string(out))
+	// Set password via chpasswd only if provided
+	if plainPassword != "" {
+		chpasswd := exec.Command("chpasswd")
+		chpasswd.Stdin = bytes.NewBufferString(fmt.Sprintf("%s:%s\n", acc.Username, plainPassword))
+		if out, err := chpasswd.CombinedOutput(); err != nil {
+			return fmt.Errorf("chpasswd failed: %v, output: %s", err, string(out))
+		}
 	}
 
 	// Ensure Maildir exists
@@ -58,9 +61,10 @@ func EnsureBounceAccount(acc models.BounceAccount) error {
 }
 
 // ApplyAllBounceAccounts ensures all stored bounce accounts exist on system.
+// It does NOT change passwords (plain password is not stored).
 func ApplyAllBounceAccounts(accounts []models.BounceAccount) error {
 	for _, acc := range accounts {
-		if err := EnsureBounceAccount(acc); err != nil {
+		if err := EnsureBounceAccount(acc, ""); err != nil {
 			return err
 		}
 	}
