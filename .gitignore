@@ -1,0 +1,24 @@
+# Binaries
+kumomta-ui-server
+*.exe
+
+# Database
+*.db
+data/
+
+# Frontend build
+web/dist/
+web/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+.env.local
