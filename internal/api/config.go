@@ -15,6 +15,12 @@ type configPreviewDTO struct {
 	InitLua             string `json:"init_lua"`
 }
 
+// configApplyResponse is what we return after applying to the system.
+type configApplyResponse struct {
+	ApplyResult *core.ApplyResult `json:"apply_result,omitempty"`
+	Error       string            `json:"error,omitempty"`
+}
+
 // GET /api/config/preview
 func (s *Server) handlePreviewConfig(w http.ResponseWriter, r *http.Request) {
 	snap, err := core.LoadSnapshot(s.Store)
@@ -24,8 +30,6 @@ func (s *Server) handlePreviewConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Even if settings or domains are empty, we still generate something.
-	// Later the UI can show "no domains configured yet" on top.
 	const dkimBasePath = "/opt/kumomta/etc/dkim"
 
 	out := configPreviewDTO{
@@ -37,4 +41,36 @@ func (s *Server) handlePreviewConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// POST /api/config/apply
+// This will:
+//  - load snapshot
+//  - generate configs
+//  - write them to real Kumo paths
+//  - validate via kumod
+//  - restart kumomta if validation passes
+func (s *Server) handleApplyConfig(w http.ResponseWriter, r *http.Request) {
+	snap, err := core.LoadSnapshot(s.Store)
+	if err != nil {
+		s.Store.LogError(err)
+		writeJSON(w, http.StatusInternalServerError, configApplyResponse{
+			Error: "failed to load snapshot",
+		})
+		return
+	}
+
+	res, applyErr := core.ApplyKumoConfig(snap)
+	if applyErr != nil {
+		s.Store.LogError(applyErr)
+		writeJSON(w, http.StatusInternalServerError, configApplyResponse{
+			ApplyResult: res,
+			Error:       applyErr.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, configApplyResponse{
+		ApplyResult: res,
+	})
 }
