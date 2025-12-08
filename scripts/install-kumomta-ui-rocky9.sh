@@ -51,8 +51,14 @@ fi
 
 # --- Install dependencies ---
 
-echo "[*] Installing dependencies (git, Go, firewalld)..."
+echo "[*] Installing dependencies (git, Go, firewalld, Node.js)..."
 dnf install -y git golang firewalld
+
+# Install Node.js (for frontend build)
+if ! command -v node >/dev/null 2>&1; then
+  echo "[*] Installing Node.js..."
+  dnf module install -y nodejs:20 || dnf install -y nodejs npm
+fi
 
 if [ -n "$PANEL_DOMAIN" ]; then
   echo "[*] Installing nginx and certbot..."
@@ -61,9 +67,24 @@ fi
 
 # --- Build Go binary ---
 
+echo "[*] Running go mod tidy (downloading dependencies and generating go.sum)..."
+GO111MODULE=on go mod tidy
+
 echo "[*] Building Go binary..."
 GO111MODULE=on go build -o "$BIN_PATH" ./cmd/server
 chmod +x "$BIN_PATH"
+
+# --- Build Frontend ---
+
+echo "[*] Building frontend..."
+if [ -d "$PANEL_DIR/web" ]; then
+  cd "$PANEL_DIR/web"
+  npm install
+  npm run build
+  cd "$PANEL_DIR"
+else
+  echo "Warning: web directory not found, skipping frontend build"
+fi
 
 # --- Ensure DB directory exists ---
 
@@ -90,6 +111,7 @@ After=network.target
 User=root
 Group=root
 WorkingDirectory=$PANEL_DIR
+Environment=DB_DIR=$DB_DIR
 ExecStart=$BIN_PATH
 Restart=always
 RestartSec=5
@@ -175,12 +197,16 @@ fi
 
 # --- Final message ---
 
-echo "=== Installation complete ==="
+echo ""
+echo "==========================================="
+echo "       Installation Complete!"
+echo "==========================================="
+echo ""
 
 if [ -n "$PANEL_DOMAIN" ]; then
   echo "Panel URL:  https://$PANEL_DOMAIN/"
   echo "API URL:    https://$PANEL_DOMAIN/api"
-  echo
+  echo ""
   echo "DNS reminder: ensure an A record points $PANEL_DOMAIN -> $VPS_IP"
 else
   if [ -n "$VPS_IP" ]; then
@@ -193,5 +219,11 @@ else
   fi
 fi
 
-echo
+echo ""
 echo "Open the Panel URL in your browser and use 'First-time Setup' to create the admin user."
+echo ""
+echo "Useful commands:"
+echo "  - Check service status: systemctl status kumomta-ui"
+echo "  - View logs: journalctl -u kumomta-ui -f"
+echo "  - Restart service: systemctl restart kumomta-ui"
+echo ""
