@@ -5,11 +5,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/mail"
+	"time"
+	"unicode"
 
 	"golang.org/x/crypto/bcrypt"
+
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
+
+// Token validity duration
+const TokenValidityDuration = 7 * 24 * time.Hour // 7 days
 
 type authRequest struct {
 	Email    string `json:"email"`
@@ -27,11 +34,47 @@ func generateToken() string {
 	return hex.EncodeToString(b)
 }
 
+// validateEmail checks if the email format is valid
+func validateEmail(email string) bool {
+	_, err := mail.ParseAddress(email)
+	return err == nil
+}
+
+// validatePassword checks password strength (min 8 chars, at least 1 letter and 1 number)
+func validatePassword(password string) bool {
+	if len(password) < 8 {
+		return false
+	}
+	hasLetter := false
+	hasNumber := false
+	for _, c := range password {
+		if unicode.IsLetter(c) {
+			hasLetter = true
+		}
+		if unicode.IsDigit(c) {
+			hasNumber = true
+		}
+	}
+	return hasLetter && hasNumber
+}
+
 // POST /api/auth/register
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req authRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	// Validate email format
+	if !validateEmail(req.Email) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid email format"})
+		return
+	}
+
+	// Validate password strength
+	if !validatePassword(req.Password) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters with at least 1 letter and 1 number"})
 		return
 	}
 
@@ -53,6 +96,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Email:        req.Email,
 		PasswordHash: string(hash),
 		APIToken:     token,
+		TokenExpiry:  time.Now().Add(TokenValidityDuration),
 	}
 
 	if err := s.Store.CreateAdmin(admin); err != nil {
@@ -86,8 +130,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Regenerate token on login
+	// Regenerate token on login with new expiry
 	admin.APIToken = generateToken()
+	admin.TokenExpiry = time.Now().Add(TokenValidityDuration)
 	s.Store.UpdateAdmin(admin)
 
 	writeJSON(w, http.StatusOK, authResponse{Token: admin.APIToken, Email: admin.Email})
