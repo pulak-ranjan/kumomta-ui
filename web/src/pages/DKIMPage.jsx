@@ -40,6 +40,17 @@ export default function DKIMPage() {
     }
   };
 
+  const copy = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMsg("Copied to clipboard");
+      setTimeout(() => setMsg(""), 2000);
+    } catch {
+      setMsg("Failed to copy");
+      setTimeout(() => setMsg(""), 2000);
+    }
+  };
+
   return (
     <div className="space-y-4 text-sm">
       <h2 className="text-lg font-semibold">DKIM</h2>
@@ -80,23 +91,52 @@ export default function DKIMPage() {
           <div className="text-xs text-slate-500">No DKIM records found.</div>
         ) : (
           <div className="space-y-2">
-            {records.map((r, idx) => (
-              <div
-                key={idx}
-                className="bg-slate-900 border border-slate-800 rounded-md p-2 text-[11px]"
-              >
-                <div className="text-slate-300">
-                  {r.domain} ({r.selector})
+            {records.map((r, idx) => {
+              const fullLine = `${r.dns_name} 3600 IN TXT "${r.dns_value}"`;
+              return (
+                <div
+                  key={idx}
+                  className="bg-slate-900 border border-slate-800 rounded-md p-2 text-[11px]"
+                >
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="text-slate-300">
+                      {r.domain} ({r.selector})
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => copy(r.dns_name)}
+                        className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px]"
+                      >
+                        Copy name
+                      </button>
+                      <button
+                        onClick={() => copy(r.dns_value)}
+                        className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px]"
+                      >
+                        Copy value
+                      </button>
+                      <button
+                        onClick={() => copy(fullLine)}
+                        className="px-2 py-1 rounded bg-sky-500 hover:bg-sky-600 text-[10px]"
+                      >
+                        Copy full TXT
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-slate-400">
+                    Name: <code>{r.dns_name}</code>
+                  </div>
+                  <div className="text-slate-400">
+                    Value:{" "}
+                    <code className="break-all">{r.dns_value}</code>
+                  </div>
+                  <div className="mt-1 text-slate-500">
+                    Full TXT:{" "}
+                    <code className="break-all">{fullLine}</code>
+                  </div>
                 </div>
-                <div className="text-slate-400">
-                  Name: <code>{r.dns_name}</code>
-                </div>
-                <div className="text-slate-400">
-                  Value:{" "}
-                  <code className="break-all">{r.dns_value}</code>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
