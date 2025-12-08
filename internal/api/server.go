@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -35,6 +36,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(securityHeaders)
 
 	// Public routes (no auth)
 	r.Get("/api/status", s.handleStatus)
@@ -90,11 +92,22 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/logs/dovecot", s.handleLogsDovecot)
 		r.Get("/api/logs/fail2ban", s.handleLogsFail2ban)
 	})
-	
-    fileServer := http.FileServer(http.Dir("./web/dist"))
-    r.Handle("/*", fileServer)
-	
+
+	fileServer := http.FileServer(http.Dir("./web/dist"))
+	r.Handle("/*", fileServer)
+
 	return r
+}
+
+// securityHeaders adds security headers to all responses
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {
@@ -134,6 +147,12 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			}
 			s.Store.LogError(err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to validate token"})
+			return
+		}
+
+		// Check if token has expired
+		if !admin.TokenExpiry.IsZero() && admin.TokenExpiry.Before(time.Now()) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token expired, please login again"})
 			return
 		}
 
