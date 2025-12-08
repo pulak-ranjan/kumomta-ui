@@ -4,11 +4,13 @@ import {
   saveDomain,
   deleteDomain,
   saveSender,
-  deleteSender
+  deleteSender,
+  getSettings
 } from "../api";
 
 export default function Domains() {
   const [domains, setDomains] = useState([]);
+  const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [editingDomain, setEditingDomain] = useState(null);
@@ -25,10 +27,11 @@ export default function Domains() {
     setLoading(true);
     setMsg("");
     try {
-      const d = await listDomains();
+      const [d, s] = await Promise.all([listDomains(), getSettings()]);
       setDomains(d);
+      setSettings(s);
     } catch (err) {
-      setMsg(err.message || "Failed to load domains");
+      setMsg(err.message || "Failed to load domains/settings");
     } finally {
       setLoading(false);
     }
@@ -122,10 +125,55 @@ export default function Domains() {
     }
   };
 
+  const copy = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMsg("Copied to clipboard");
+      setTimeout(() => setMsg(""), 2000);
+    } catch {
+      setMsg("Failed to copy");
+      setTimeout(() => setMsg(""), 2000);
+    }
+  };
+
+  const dnsHelpers = (d) => {
+    const ip = settings?.main_server_ip || "<SERVER_IP>";
+    const root = d.name || "<domain>";
+    const mailHost = d.mail_host || `mail.${root}`;
+    const bounceHost = d.bounce_host || `bounce.${root}`;
+
+    return [
+      {
+        label: "A for mail host",
+        value: `${mailHost} 3600 IN A ${ip}`
+      },
+      {
+        label: "A for bounce host",
+        value: `${bounceHost} 3600 IN A ${ip}`
+      },
+      {
+        label: "MX to mail host",
+        value: `${root} 3600 IN MX 10 ${mailHost}.`
+      },
+      {
+        label: "SPF (basic)",
+        value: `${root} 3600 IN TXT "v=spf1 ip4:${ip} ~all"`
+      }
+    ];
+  };
+
   return (
     <div className="space-y-4 text-sm">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Domains & Senders</h2>
+        <div>
+          <h2 className="text-lg font-semibold">Domains & Senders</h2>
+          {settings?.main_server_ip && (
+            <div className="text-[11px] text-slate-500">
+              Main server IP:{" "}
+              <span className="font-mono">{settings.main_server_ip}</span>
+            </div>
+          )}
+        </div>
         <button
           onClick={() => handleEditDomain(null)}
           className="px-3 py-1 rounded-md bg-sky-500 hover:bg-sky-600 text-xs"
@@ -133,7 +181,7 @@ export default function Domains() {
           + New Domain
         </button>
       </div>
-      {msg && <div className="text-xs text-red-400">{msg}</div>}
+      {msg && <div className="text-xs text-slate-300">{msg}</div>}
       {loading ? (
         <div className="text-slate-400">Loading...</div>
       ) : domains.length === 0 ? (
@@ -145,7 +193,7 @@ export default function Domains() {
               key={d.id}
               className="bg-slate-900 border border-slate-800 rounded-lg p-3"
             >
-              <div className="flex justify-between items-center mb-2">
+              <div className="flex justify-between items-start mb-2 gap-3">
                 <div>
                   <div className="font-medium">{d.name}</div>
                   <div className="text-xs text-slate-400">
@@ -167,6 +215,36 @@ export default function Domains() {
                   </button>
                 </div>
               </div>
+
+              {/* DNS Helper */}
+              <div className="mt-2 mb-2">
+                <div className="text-[11px] text-slate-400 mb-1">
+                  Quick DNS helpers
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
+                  {dnsHelpers(d).map((rec, idx) => (
+                    <div
+                      key={idx}
+                      className="bg-slate-950/60 border border-slate-800 rounded-md px-2 py-1 flex justify-between items-center gap-2"
+                    >
+                      <div className="text-[11px] text-slate-300 pr-1">
+                        <div className="text-slate-400">{rec.label}</div>
+                        <div className="font-mono break-all">
+                          {rec.value}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => copy(rec.value)}
+                        className="flex-shrink-0 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px]"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Senders */}
               <div className="mt-2">
                 <div className="flex items-center justify-between mb-1">
                   <div className="text-xs text-slate-400">Senders</div>
