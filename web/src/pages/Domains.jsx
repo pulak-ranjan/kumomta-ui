@@ -1,0 +1,363 @@
+import React, { useEffect, useState } from "react";
+import {
+  listDomains,
+  saveDomain,
+  deleteDomain,
+  saveSender,
+  deleteSender
+} from "../api";
+
+export default function Domains() {
+  const [domains, setDomains] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState("");
+  const [editingDomain, setEditingDomain] = useState(null);
+  const [senderForm, setSenderForm] = useState({
+    domainID: null,
+    id: 0,
+    local_part: "",
+    email: "",
+    ip: "",
+    smtp_password: ""
+  });
+
+  const load = async () => {
+    setLoading(true);
+    setMsg("");
+    try {
+      const d = await listDomains();
+      setDomains(d);
+    } catch (err) {
+      setMsg(err.message || "Failed to load domains");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const emptyDomain = { id: 0, name: "", mail_host: "", bounce_host: "" };
+
+  const handleEditDomain = (d) => {
+    setEditingDomain(d ? { ...d } : { ...emptyDomain });
+  };
+
+  const handleSaveDomain = async (e) => {
+    e.preventDefault();
+    try {
+      await saveDomain(editingDomain);
+      setEditingDomain(null);
+      await load();
+    } catch (err) {
+      setMsg(err.message || "Failed to save domain");
+    }
+  };
+
+  const handleDeleteDomain = async (id) => {
+    if (!window.confirm("Delete this domain?")) return;
+    try {
+      await deleteDomain(id);
+      await load();
+    } catch (err) {
+      setMsg(err.message || "Failed to delete domain");
+    }
+  };
+
+  const startNewSender = (domain) => {
+    setSenderForm({
+      domainID: domain.id,
+      id: 0,
+      local_part: "",
+      email: "",
+      ip: "",
+      smtp_password: ""
+    });
+  };
+
+  const startEditSender = (domain, s) => {
+    setSenderForm({
+      domainID: domain.id,
+      id: s.id,
+      local_part: s.local_part,
+      email: s.email,
+      ip: s.ip,
+      smtp_password: s.smtp_password
+    });
+  };
+
+  const handleSaveSender = async (e) => {
+    e.preventDefault();
+    if (!senderForm.domainID) return;
+    try {
+      await saveSender(senderForm.domainID, {
+        id: senderForm.id,
+        local_part: senderForm.local_part,
+        email: senderForm.email,
+        ip: senderForm.ip,
+        smtp_password: senderForm.smtp_password
+      });
+      setSenderForm({
+        domainID: null,
+        id: 0,
+        local_part: "",
+        email: "",
+        ip: "",
+        smtp_password: ""
+      });
+      await load();
+    } catch (err) {
+      setMsg(err.message || "Failed to save sender");
+    }
+  };
+
+  const handleDeleteSender = async (id) => {
+    if (!window.confirm("Delete this sender?")) return;
+    try {
+      await deleteSender(id);
+      await load();
+    } catch (err) {
+      setMsg(err.message || "Failed to delete sender");
+    }
+  };
+
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Domains & Senders</h2>
+        <button
+          onClick={() => handleEditDomain(null)}
+          className="px-3 py-1 rounded-md bg-sky-500 hover:bg-sky-600 text-xs"
+        >
+          + New Domain
+        </button>
+      </div>
+      {msg && <div className="text-xs text-red-400">{msg}</div>}
+      {loading ? (
+        <div className="text-slate-400">Loading...</div>
+      ) : domains.length === 0 ? (
+        <div className="text-slate-400">No domains yet.</div>
+      ) : (
+        <div className="space-y-3">
+          {domains.map((d) => (
+            <div
+              key={d.id}
+              className="bg-slate-900 border border-slate-800 rounded-lg p-3"
+            >
+              <div className="flex justify-between items-center mb-2">
+                <div>
+                  <div className="font-medium">{d.name}</div>
+                  <div className="text-xs text-slate-400">
+                    mail: {d.mail_host || "-"} | bounce: {d.bounce_host || "-"}
+                  </div>
+                </div>
+                <div className="flex gap-2 text-xs">
+                  <button
+                    onClick={() => handleEditDomain(d)}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDeleteDomain(d.id)}
+                    className="px-2 py-1 rounded bg-red-600/80 hover:bg-red-600"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-xs text-slate-400">Senders</div>
+                  <button
+                    onClick={() => startNewSender(d)}
+                    className="text-[11px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700"
+                  >
+                    + Add Sender
+                  </button>
+                </div>
+                {(!d.senders || d.senders.length === 0) ? (
+                  <div className="text-xs text-slate-500">
+                    No senders for this domain.
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {d.senders.map((s) => (
+                      <div
+                        key={s.id}
+                        className="flex justify-between items-center text-xs bg-slate-950/50 border border-slate-800 rounded-md px-2 py-1"
+                      >
+                        <div>
+                          <div>{s.email}</div>
+                          <div className="text-slate-500">
+                            local: {s.local_part || "-"} | IP: {s.ip || "-"}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => startEditSender(d, s)}
+                            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteSender(s.id)}
+                            className="px-2 py-1 rounded bg-red-600/80 hover:bg-red-600"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Domain modal */}
+      {editingDomain && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 w-full max-w-md">
+            <h3 className="text-sm font-semibold mb-3">
+              {editingDomain.id ? "Edit Domain" : "New Domain"}
+            </h3>
+            <form onSubmit={handleSaveDomain} className="space-y-2 text-sm">
+              <div>
+                <label className="block text-slate-300 mb-1">Domain</label>
+                <input
+                  className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
+                  value={editingDomain.name}
+                  onChange={(e) =>
+                    setEditingDomain((d) => ({ ...d, name: e.target.value }))
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 mb-1">Mail Host</label>
+                <input
+                  className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
+                  value={editingDomain.mail_host || ""}
+                  onChange={(e) =>
+                    setEditingDomain((d) => ({ ...d, mail_host: e.target.value }))
+                  }
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 mb-1">Bounce Host</label>
+                <input
+                  className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
+                  value={editingDomain.bounce_host || ""}
+                  onChange={(e) =>
+                    setEditingDomain((d) => ({ ...d, bounce_host: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setEditingDomain(null)}
+                  className="px-3 py-1 rounded bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-3 py-1 rounded bg-sky-500 hover:bg-sky-600"
+                >
+                  Save
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Sender modal */}
+      {senderForm.domainID && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 w-full max-w-md">
+            <h3 className="text-sm font-semibold mb-3">
+              {senderForm.id ? "Edit Sender" : "New Sender"}
+            </h3>
+            <form onSubmit={handleSaveSender} className="space-y-2 text-sm">
+              <div>
+                <label className="block text-slate-300 mb-1">Local Part</label>
+                <input
+                  value={senderForm.local_part}
+                  onChange={(e) =>
+                    setSenderForm((s) => ({ ...s, local_part: e.target.value }))
+                  }
+                  placeholder="editor / info / marketing"
+                  className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 mb-1">Email</label>
+                <input
+                  value={senderForm.email}
+                  onChange={(e) =>
+                    setSenderForm((s) => ({ ...s, email: e.target.value }))
+                  }
+                  placeholder="editor@example.com"
+                  className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 mb-1">IP</label>
+                <input
+                  value={senderForm.ip}
+                  onChange={(e) =>
+                    setSenderForm((s) => ({ ...s, ip: e.target.value }))
+                  }
+                  placeholder="51.x.x.x"
+                  className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 mb-1">SMTP Password</label>
+                <input
+                  value={senderForm.smtp_password}
+                  onChange={(e) =>
+                    setSenderForm((s) => ({ ...s, smtp_password: e.target.value }))
+                  }
+                  placeholder="Mwin11@2025 or custom"
+                  className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
+                  type="password"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSenderForm({
+                      domainID: null,
+                      id: 0,
+                      local_part: "",
+                      email: "",
+                      ip: "",
+                      smtp_password: ""
+                    })
+                  }
+                  className="px-3 py-1 rounded bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-3 py-1 rounded bg-sky-500 hover:bg-sky-600"
+                >
+                  Save
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
