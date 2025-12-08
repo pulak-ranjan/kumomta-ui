@@ -28,10 +28,12 @@ export default function Domains() {
     setMsg("");
     try {
       const [d, s] = await Promise.all([listDomains(), getSettings()]);
-      setDomains(d);
-      setSettings(s);
+      // Ensure domains is always an array (handle null/undefined from API)
+      setDomains(Array.isArray(d) ? d : []);
+      setSettings(s || null);
     } catch (err) {
       setMsg(err.message || "Failed to load domains/settings");
+      setDomains([]);
     } finally {
       setLoading(false);
     }
@@ -83,10 +85,10 @@ export default function Domains() {
     setSenderForm({
       domainID: domain.id,
       id: s.id,
-      local_part: s.local_part,
-      email: s.email,
-      ip: s.ip,
-      smtp_password: s.smtp_password
+      local_part: s.local_part || "",
+      email: s.email || "",
+      ip: s.ip || "",
+      smtp_password: s.smtp_password || ""
     });
   };
 
@@ -160,6 +162,11 @@ export default function Domains() {
         value: `${root} 3600 IN TXT "v=spf1 ip4:${ip} ~all"`
       }
     ];
+  };
+
+  // Helper to safely get senders array
+  const getSenders = (domain) => {
+    return Array.isArray(domain.senders) ? domain.senders : [];
   };
 
   return (
@@ -255,19 +262,19 @@ export default function Domains() {
                     + Add Sender
                   </button>
                 </div>
-                {(!d.senders || d.senders.length === 0) ? (
+                {getSenders(d).length === 0 ? (
                   <div className="text-xs text-slate-500">
                     No senders for this domain.
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    {d.senders.map((s) => (
+                    {getSenders(d).map((s) => (
                       <div
                         key={s.id}
                         className="flex justify-between items-center text-xs bg-slate-950/50 border border-slate-800 rounded-md px-2 py-1"
                       >
                         <div>
-                          <div>{s.email}</div>
+                          <div>{s.email || "-"}</div>
                           <div className="text-slate-500">
                             local: {s.local_part || "-"} | IP: {s.ip || "-"}
                           </div>
@@ -308,7 +315,7 @@ export default function Domains() {
                 <label className="block text-slate-300 mb-1">Domain</label>
                 <input
                   className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
-                  value={editingDomain.name}
+                  value={editingDomain.name || ""}
                   onChange={(e) =>
                     setEditingDomain((d) => ({ ...d, name: e.target.value }))
                   }
