@@ -26,6 +26,8 @@ func NewStore(path string) (*Store, error) {
 		&models.AppSettings{},
 		&models.Domain{},
 		&models.Sender{},
+		&models.AdminUser{},
+		&models.BounceAccount{},
 	); err != nil {
 		return nil, err
 	}
@@ -143,4 +145,80 @@ func (s *Store) UpdateSender(snd *models.Sender) error {
 
 func (s *Store) DeleteSender(id uint) error {
 	return s.DB.Delete(&models.Sender{}, id).Error
+}
+
+// ----------------------
+// Admin Users
+// ----------------------
+
+func (s *Store) AdminCount() (int64, error) {
+	var count int64
+	err := s.DB.Model(&models.AdminUser{}).Count(&count).Error
+	return count, err
+}
+
+func (s *Store) GetAdminByEmail(email string) (*models.AdminUser, error) {
+	var u models.AdminUser
+	err := s.DB.Where("email = ?", email).First(&u).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (s *Store) GetAdminByToken(token string) (*models.AdminUser, error) {
+	var u models.AdminUser
+	err := s.DB.Where("api_token = ?", token).First(&u).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (s *Store) CreateAdmin(u *models.AdminUser) error {
+	return s.DB.Create(u).Error
+}
+
+func (s *Store) UpdateAdmin(u *models.AdminUser) error {
+	return s.DB.Save(u).Error
+}
+
+// ----------------------
+// Bounce Accounts
+// ----------------------
+
+func (s *Store) ListBounceAccounts() ([]models.BounceAccount, error) {
+	var list []models.BounceAccount
+	err := s.DB.Find(&list).Error
+	return list, err
+}
+
+func (s *Store) GetBounceAccountByID(id uint) (*models.BounceAccount, error) {
+	var b models.BounceAccount
+	err := s.DB.First(&b, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+func (s *Store) CreateBounceAccount(b *models.BounceAccount) error {
+	return s.DB.Create(b).Error
+}
+
+func (s *Store) UpdateBounceAccount(b *models.BounceAccount) error {
+	return s.DB.Save(b).Error
+}
+
+func (s *Store) DeleteBounceAccount(id uint) error {
+	return s.DB.Delete(&models.BounceAccount{}, id).Error
 }
