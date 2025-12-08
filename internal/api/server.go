@@ -33,11 +33,13 @@ func (s *Server) Router() http.Handler {
 
 	// TODO: add auth middleware here later
 
-	// Routes
-		// Routes
+ // Routes
 	r.Get("/api/status", s.handleStatus)
 	r.Get("/api/settings", s.handleGetSettings)
 	r.Post("/api/settings", s.handleSaveSettings)
+
+	// Config preview (no file writes yet)
+	r.Get("/api/config/preview", s.handlePreviewConfig)
 
 	// Domains + Senders
 	r.Route("/api/domains", func(r chi.Router) {
