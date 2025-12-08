@@ -33,15 +33,15 @@ type AdminUser struct {
 }
 
 type BounceAccount struct {
-	ID       uint   `gorm:"primaryKey"`
-	Username string `gorm:"uniqueIndex"` // system username, IMAP login
-	Password string // stored plain for now so UI can show it (internal panel)
-	Domain   string // optional, for reference
-	Notes    string // optional description
+	ID           uint   `gorm:"primaryKey"`
+	Username     string `gorm:"uniqueIndex"` // system username, IMAP login
+	PasswordHash string                       // bcrypt hash
+	Domain       string                       // optional, for reference
+	Notes        string                       // optional description
 }
 
 // A sender identity associated with a domain
-// (Generic: can be editor, info, support, billing, ANYTHING)
+// (Generic: can be ANYTHING)
 type Sender struct {
 	ID       uint   `gorm:"primaryKey"`
 	DomainID uint   `gorm:"index"`
