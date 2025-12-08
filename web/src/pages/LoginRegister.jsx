@@ -8,6 +8,10 @@ export default function LoginRegister() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
+  const origin = window.location.origin;
+  const panelUrl = origin;
+  const apiUrl = origin + "/api";
+
   const onSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -28,6 +32,13 @@ export default function LoginRegister() {
         <h1 className="text-xl font-semibold mb-2">
           Kumo Control Panel
         </h1>
+        <p className="text-[11px] text-slate-400 mb-3">
+          Panel URL:{" "}
+          <span className="font-mono text-slate-200">{panelUrl}</span>
+          <br />
+          API URL:{" "}
+          <span className="font-mono text-slate-200">{apiUrl}</span>
+        </p>
         <p className="text-xs text-slate-400 mb-4">
           {mode === "register"
             ? "First-time setup: create the first admin user."
@@ -92,8 +103,9 @@ export default function LoginRegister() {
         </form>
 
         <p className="mt-4 text-[11px] text-slate-500">
-          API base: <code>http://[VPS_IP]:9000</code>.  
-          First-time: use <span className="font-mono">First-time Setup</span> tab.
+          After installation, open{" "}
+          <span className="font-mono">{panelUrl}</span>{" "}
+          in your browser and use <b>First-time Setup</b> to create the admin.
         </p>
       </div>
     </div>
