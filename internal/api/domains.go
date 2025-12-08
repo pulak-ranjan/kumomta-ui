@@ -18,7 +18,7 @@ type domainDTO struct {
 	Name       string      `json:"name"`
 	MailHost   string      `json:"mail_host"`
 	BounceHost string      `json:"bounce_host"`
-	Senders    []senderDTO `json:"senders,omitempty"`
+	Senders    []senderDTO `json:"senders"`
 }
 
 type senderDTO struct {
@@ -43,7 +43,8 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var out []domainDTO
+	// Initialize as empty slice, not nil - this ensures JSON returns [] not null
+	out := make([]domainDTO, 0, len(domains))
 	for _, d := range domains {
 		out = append(out, domainToDTO(&d, true))
 	}
@@ -165,7 +166,8 @@ func (s *Server) handleListSenders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var out []senderDTO
+	// Initialize as empty slice, not nil
+	out := make([]senderDTO, 0, len(senders))
 	for _, sdr := range senders {
 		out = append(out, senderToDTO(&sdr))
 	}
@@ -272,9 +274,10 @@ func domainToDTO(d *models.Domain, includeSenders bool) domainDTO {
 		Name:       d.Name,
 		MailHost:   d.MailHost,
 		BounceHost: d.BounceHost,
+		Senders:    make([]senderDTO, 0), // Initialize as empty slice, not nil
 	}
 
-	if includeSenders {
+	if includeSenders && len(d.Senders) > 0 {
 		for _, sdr := range d.Senders {
 			dto.Senders = append(dto.Senders, senderToDTO(&sdr))
 		}
