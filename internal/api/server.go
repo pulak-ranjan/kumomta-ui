@@ -12,14 +12,17 @@ import (
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
 
+// Server wraps dependencies for HTTP handlers.
 type Server struct {
 	Store *store.Store
 }
 
+// NewServer creates a new API server instance.
 func NewServer(st *store.Store) *Server {
 	return &Server{Store: st}
 }
 
+// Router builds the chi router with all routes and middleware.
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 
@@ -28,7 +31,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// TODO: add auth middleware later
+	// TODO: add auth middleware here later
 
 	// Routes
 	r.Get("/api/status", s.handleStatus)
@@ -46,8 +49,11 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// ------------ Status ------------
+// ----------------------
+// Status
+// ----------------------
 
+// handleStatus returns basic service health info.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]string{
 		"api":      "ok",
@@ -58,6 +64,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// serviceStatus checks systemd status of a service.
 func serviceStatus(name string) string {
 	cmd := exec.Command("systemctl", "is-active", "--quiet", name)
 	if err := cmd.Run(); err != nil {
@@ -66,22 +73,30 @@ func serviceStatus(name string) string {
 	return "active"
 }
 
-// ------------ Settings ------------
+// ----------------------
+// Settings
+// ----------------------
 
-// DTO so we don't leak AIAPIKey back in responses
+// settingsDTO is what the API exposes to the UI.
+// Note: RelayIPs is a generic list of authorized relay IPs (CSV),
+// can be MailWizz, any ESP, or custom app IPs.
 type settingsDTO struct {
 	MainHostname string `json:"main_hostname"`
 	MainServerIP string `json:"main_server_ip"`
-	MailWizzIP   string `json:"mailwizz_ip"`
+
+	// Comma-separated list of relay/allowed IPs
+	// Example: "10.0.0.5,192.168.1.10"
+	RelayIPs string `json:"relay_ips"`
 
 	AIProvider string `json:"ai_provider"`
 	AIAPIKey   string `json:"ai_api_key,omitempty"` // write-only from client
 }
 
+// handleGetSettings returns the current app settings (if any).
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	st, err := s.Store.GetSettings()
 	if err != nil {
-		// If not found, just return empty settings object
+		// If not found, return an empty settings object instead of error.
 		if err == store.ErrNotFound {
 			writeJSON(w, http.StatusOK, settingsDTO{})
 			return
@@ -94,7 +109,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	dto := settingsDTO{
 		MainHostname: st.MainHostname,
 		MainServerIP: st.MainServerIP,
-		MailWizzIP:   st.MailWizzIP,
+		RelayIPs:     st.MailWizzIP, // internal field name, but semantics = relay IPs
 		AIProvider:   st.AIProvider,
 		// AIAPIKey intentionally not returned
 	}
@@ -102,6 +117,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dto)
 }
 
+// handleSaveSettings creates or updates app-level settings.
 func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	var dto settingsDTO
 	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
@@ -123,7 +139,8 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	// Update fields from DTO
 	st.MainHostname = dto.MainHostname
 	st.MainServerIP = dto.MainServerIP
-	st.MailWizzIP = dto.MailWizzIP
+	// Even though field name is MailWizzIP, it's actually generic "relay IPs"
+	st.MailWizzIP = dto.RelayIPs
 	st.AIProvider = dto.AIProvider
 
 	// Only overwrite AIAPIKey if user sent something non-empty
@@ -137,7 +154,7 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return sanitized DTO
+	// Never echo back the AI key
 	dto.AIAPIKey = ""
 	writeJSON(w, http.StatusOK, dto)
 }
