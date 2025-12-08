@@ -82,6 +82,12 @@ func (s *Server) handleSaveDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// VALIDATION FIX: Ensure name is not empty
+	if dto.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "domain name is required"})
+		return
+	}
+
 	// Create
 	if dto.ID == 0 {
 		d := &models.Domain{
@@ -277,14 +283,15 @@ func domainToDTO(d *models.Domain, includeSenders bool) domainDTO {
 	return dto
 }
 
+// SECURITY FIX: Never return the password in the API response.
 func senderToDTO(sdr *models.Sender) senderDTO {
 	return senderDTO{
-		ID:           sdr.ID,
-		DomainID:     sdr.DomainID,
-		LocalPart:    sdr.LocalPart,
-		Email:        sdr.Email,
-		IP:           sdr.IP,
-		SMTPPassword: sdr.SMTPPassword,
+		ID:        sdr.ID,
+		DomainID:  sdr.DomainID,
+		LocalPart: sdr.LocalPart,
+		Email:     sdr.Email,
+		IP:        sdr.IP,
+		// SMTPPassword: sdr.SMTPPassword, <--- REMOVED FOR SECURITY
 	}
 }
 
