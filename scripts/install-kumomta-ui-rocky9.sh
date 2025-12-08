@@ -62,6 +62,18 @@ echo "[*] Disabling postfix if present..."
 systemctl disable --now postfix 2>/dev/null || true
 
 # --------------------------
+# Install Dovecot & Fail2ban
+# --------------------------
+echo "[*] Installing Dovecot and Fail2ban..."
+dnf install -y dovecot fail2ban fail2ban-firewalld || true
+
+echo "[*] Enabling Fail2ban (recommended for security)..."
+systemctl enable --now fail2ban 2>/dev/null || true
+
+# (Dovecot is installed but not auto-started; enable if you need IMAP/POP)
+# systemctl enable --now dovecot
+
+# --------------------------
 # Install Node.js (for frontend)
 # --------------------------
 if ! command -v node >/dev/null 2>&1; then
@@ -83,7 +95,6 @@ fi
 # Install KumoMTA
 # --------------------------
 echo "[*] Adding KumoMTA repository and installing KumoMTA..."
-# Official KumoMTA instructions for Rocky 8/9 
 dnf config-manager --add-repo https://openrepo.kumomta.com/files/kumomta-rocky.repo || true
 yum install -y kumomta
 
@@ -235,7 +246,7 @@ fi
 
 echo
 echo "==========================================="
-echo "      KumoMTA + KumoMTA-UI Installed"
+echo "  KumoMTA + KumoMTA-UI Installed"
 echo "==========================================="
 echo
 
