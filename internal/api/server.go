@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os/exec"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -11,6 +13,9 @@ import (
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
+
+// context key for admin user
+type ctxKeyAdmin struct{}
 
 // Server wraps dependencies for HTTP handlers.
 type Server struct {
@@ -26,42 +31,65 @@ func NewServer(st *store.Store) *Server {
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 
-	// Middlewares
+	// Global middlewares
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// TODO: add auth middleware here later
-
- 		// Routes
+	// Public routes (no auth)
 	r.Get("/api/status", s.handleStatus)
-	r.Get("/api/settings", s.handleGetSettings)
-	r.Post("/api/settings", s.handleSaveSettings)
 
-	// Config preview and apply
-	r.Get("/api/config/preview", s.handlePreviewConfig)
-	r.Post("/api/config/apply", s.handleApplyConfig)
-
-	// DKIM
-	r.Get("/api/dkim/records", s.handleListDKIMRecords)
-	r.Post("/api/dkim/generate", s.handleGenerateDKIM)
-
-	// Domains + Senders
-	r.Route("/api/domains", func(r chi.Router) {
-		r.Get("/", s.handleListDomains)
-		r.Post("/", s.handleSaveDomain)
-
-		r.Route("/{domainID}", func(r chi.Router) {
-			r.Get("/", s.handleGetDomain)
-			r.Delete("/", s.handleDeleteDomain)
-
-			r.Get("/senders", s.handleListSenders)
-			r.Post("/senders", s.handleSaveSender)
-		})
+	r.Route("/api/auth", func(r chi.Router) {
+		r.Post("/register", s.handleRegister)
+		r.Post("/login", s.handleLogin)
 	})
 
-	// Delete a sender by ID
-	r.Delete("/api/senders/{senderID}", s.handleDeleteSenderByID)
+	// Protected routes (auth required)
+	r.Group(func(r chi.Router) {
+		r.Use(s.authMiddleware)
+
+		r.Get("/api/auth/me", s.handleMe)
+
+		// Settings
+		r.Get("/api/settings", s.handleGetSettings)
+		r.Post("/api/settings", s.handleSaveSettings)
+
+		// Config preview and apply
+		r.Get("/api/config/preview", s.handlePreviewConfig)
+		r.Post("/api/config/apply", s.handleApplyConfig)
+
+		// DKIM
+		r.Get("/api/dkim/records", s.handleListDKIMRecords)
+		r.Post("/api/dkim/generate", s.handleGenerateDKIM)
+
+		// Domains + Senders
+		r.Route("/api/domains", func(r chi.Router) {
+			r.Get("/", s.handleListDomains)
+			r.Post("/", s.handleSaveDomain)
+
+			r.Route("/{domainID}", func(r chi.Router) {
+				r.Get("/", s.handleGetDomain)
+				r.Delete("/", s.handleDeleteDomain)
+
+				r.Get("/senders", s.handleListSenders)
+				r.Post("/senders", s.handleSaveSender)
+			})
+		})
+
+		// Delete a sender by ID
+		r.Delete("/api/senders/{senderID}", s.handleDeleteSenderByID)
+
+		// Bounce accounts
+		r.Get("/api/bounces", s.handleListBounceAccounts)
+		r.Post("/api/bounces", s.handleSaveBounceAccount)
+		r.Delete("/api/bounces/{bounceID}", s.handleDeleteBounceAccount)
+		r.Post("/api/bounces/apply", s.handleApplyBounceAccounts)
+
+		// Logs
+		r.Get("/api/logs/kumomta", s.handleLogsKumo)
+		r.Get("/api/logs/dovecot", s.handleLogsDovecot)
+		r.Get("/api/logs/fail2ban", s.handleLogsFail2ban)
+	})
 
 	return r
 }
@@ -73,10 +101,59 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 }
 
 // ----------------------
+// Auth middleware
+// ----------------------
+
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authz := r.Header.Get("Authorization")
+		if authz == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing authorization header"})
+			return
+		}
+
+		parts := strings.SplitN(authz, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid authorization header"})
+			return
+		}
+		token := strings.TrimSpace(parts[1])
+		if token == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "empty token"})
+			return
+		}
+
+		admin, err := s.Store.GetAdminByToken(token)
+		if err != nil {
+			if err == store.ErrNotFound {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+				return
+			}
+			s.Store.LogError(err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to validate token"})
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), ctxKeyAdmin{}, admin)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func getAdminFromContext(ctx context.Context) *models.AdminUser {
+	val := ctx.Value(ctxKeyAdmin{})
+	if val == nil {
+		return nil
+	}
+	if u, ok := val.(*models.AdminUser); ok {
+		return u
+	}
+	return nil
+}
+
+// ----------------------
 // Status
 // ----------------------
 
-// handleStatus returns basic service health info.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]string{
 		"api":      "ok",
@@ -87,97 +164,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// serviceStatus checks systemd status of a service.
 func serviceStatus(name string) string {
 	cmd := exec.Command("systemctl", "is-active", "--quiet", name)
 	if err := cmd.Run(); err != nil {
 		return "inactive"
 	}
 	return "active"
-}
-
-// ----------------------
-// Settings
-// ----------------------
-
-// settingsDTO is what the API exposes to the UI.
-// Note: RelayIPs is a generic list of authorized relay IPs (CSV),
-// can be MailWizz, any ESP, or custom app IPs.
-type settingsDTO struct {
-	MainHostname string `json:"main_hostname"`
-	MainServerIP string `json:"main_server_ip"`
-
-	// Comma-separated list of relay/allowed IPs
-	// Example: "10.0.0.5,192.168.1.10"
-	RelayIPs string `json:"relay_ips"`
-
-	AIProvider string `json:"ai_provider"`
-	AIAPIKey   string `json:"ai_api_key,omitempty"` // write-only from client
-}
-
-// handleGetSettings returns the current app settings (if any).
-func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	st, err := s.Store.GetSettings()
-	if err != nil {
-		// If not found, return an empty settings object instead of error.
-		if err == store.ErrNotFound {
-			writeJSON(w, http.StatusOK, settingsDTO{})
-			return
-		}
-		s.Store.LogError(err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load settings"})
-		return
-	}
-
-	dto := settingsDTO{
-		MainHostname: st.MainHostname,
-		MainServerIP: st.MainServerIP,
-		RelayIPs:     st.MailWizzIP, // internal field name, but semantics = relay IPs
-		AIProvider:   st.AIProvider,
-		// AIAPIKey intentionally not returned
-	}
-
-	writeJSON(w, http.StatusOK, dto)
-}
-
-// handleSaveSettings creates or updates app-level settings.
-func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
-	var dto settingsDTO
-	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
-		return
-	}
-
-	// Load existing or create new
-	st, err := s.Store.GetSettings()
-	if err != nil && err != store.ErrNotFound {
-		s.Store.LogError(err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load existing settings"})
-		return
-	}
-	if st == nil {
-		st = &models.AppSettings{}
-	}
-
-	// Update fields from DTO
-	st.MainHostname = dto.MainHostname
-	st.MainServerIP = dto.MainServerIP
-	// Even though field name is MailWizzIP, it's actually generic "relay IPs"
-	st.MailWizzIP = dto.RelayIPs
-	st.AIProvider = dto.AIProvider
-
-	// Only overwrite AIAPIKey if user sent something non-empty
-	if dto.AIAPIKey != "" {
-		st.AIAPIKey = dto.AIAPIKey
-	}
-
-	if err := s.Store.UpsertSettings(st); err != nil {
-		s.Store.LogError(err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save settings"})
-		return
-	}
-
-	// Never echo back the AI key
-	dto.AIAPIKey = ""
-	writeJSON(w, http.StatusOK, dto)
 }
