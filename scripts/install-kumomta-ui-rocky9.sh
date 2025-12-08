@@ -1,10 +1,10 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-echo "=== Kumo UI Backend Installer (Rocky Linux 9) ==="
+echo "=== KumoMTA + KumoMTA-UI Installer (Rocky Linux 9) ==="
 
 if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root."
+  echo "Please run as root (sudo -i)."
   exit 1
 fi
 
@@ -13,12 +13,11 @@ BIN_NAME="kumomta-ui-server"
 BIN_PATH="$PANEL_DIR/$BIN_NAME"
 DB_DIR="/var/lib/kumomta-ui"
 SERVICE_FILE="/etc/systemd/system/kumomta-ui.service"
-
-# --- Ask basic questions ---
+NGINX_CONF="/etc/nginx/conf.d/kumomta-ui.conf"
 
 echo
 read -rp "Set system hostname (eg mta.yourdomain.com) [leave empty to skip]: " SYS_HOSTNAME
-read -rp "Panel domain for HTTPS (eg mta.yourdomain.com) [leave empty for no HTTPS]: " PANEL_DOMAIN
+read -rp "Panel domain for HTTPS (eg mta.yourdomain.com) [leave empty for HTTP on :9000]: " PANEL_DOMAIN
 
 LE_EMAIL=""
 if [ -n "$PANEL_DOMAIN" ]; then
@@ -30,52 +29,81 @@ if [ -n "$PANEL_DOMAIN" ]; then
 fi
 
 echo
-
-# --- Basic checks ---
-
+echo "[*] Verifying panel directory at $PANEL_DIR ..."
 if [ ! -d "$PANEL_DIR" ]; then
   echo "Directory $PANEL_DIR not found."
   echo "Clone your Git repo there, e.g.:"
-  echo "  git clone https://github.com/pulak-ranjan/kumomta-ui.git $PANEL_DIR"
+  echo "  sudo mkdir -p /opt/kumomta-ui"
+  echo "  sudo git clone https://github.com/pulak-ranjan/kumomta-ui.git /opt/kumomta-ui"
   exit 1
 fi
 
 cd "$PANEL_DIR"
 
-# --- Set system hostname if provided ---
-
+# --------------------------
+# System hostname
+# --------------------------
 if [ -n "$SYS_HOSTNAME" ]; then
   echo "[*] Setting system hostname to $SYS_HOSTNAME"
   hostnamectl set-hostname "$SYS_HOSTNAME" || echo "Warning: failed to set hostname"
 fi
 
-# --- Install dependencies ---
+# --------------------------
+# Base dependencies
+# --------------------------
+echo "[*] Installing base dependencies (git, Go, firewalld, epel-release, dnf-plugins-core, SELinux tools)..."
+dnf install -y git golang firewalld epel-release dnf-plugins-core policycoreutils-python-utils curl
 
-echo "[*] Installing dependencies (git, Go, firewalld, Node.js)..."
-dnf install -y git golang firewalld
+# Make sure firewalld is running
+systemctl enable --now firewalld || true
 
-# Install Node.js (for frontend build)
+# Disable postfix if present (can conflict with KumoMTA)
+echo "[*] Disabling postfix if present..."
+systemctl disable --now postfix 2>/dev/null || true
+
+# --------------------------
+# Install Node.js (for frontend)
+# --------------------------
 if ! command -v node >/dev/null 2>&1; then
-  echo "[*] Installing Node.js..."
+  echo "[*] Installing Node.js 20..."
   dnf module install -y nodejs:20 || dnf install -y nodejs npm
+else
+  echo "[*] Node.js already installed."
 fi
 
+# --------------------------
+# Install nginx + certbot if domain is provided
+# --------------------------
 if [ -n "$PANEL_DOMAIN" ]; then
-  echo "[*] Installing nginx and certbot..."
+  echo "[*] Installing nginx and certbot (from EPEL)..."
   dnf install -y nginx certbot python3-certbot-nginx
 fi
 
-# --- Build Go binary ---
+# --------------------------
+# Install KumoMTA
+# --------------------------
+echo "[*] Adding KumoMTA repository and installing KumoMTA..."
+# Official KumoMTA instructions for Rocky 8/9 
+dnf config-manager --add-repo https://openrepo.kumomta.com/files/kumomta-rocky.repo || true
+yum install -y kumomta
 
-echo "[*] Running go mod tidy (downloading dependencies and generating go.sum)..."
+echo "[*] Ensuring KumoMTA directories exist..."
+mkdir -p /opt/kumomta/etc/policy
+mkdir -p /opt/kumomta/etc/dkim
+
+# --------------------------
+# Build Go backend
+# --------------------------
+echo "[*] Running go mod tidy..."
 GO111MODULE=on go mod tidy
 
-echo "[*] Building Go binary..."
+echo "[*] Building KumoMTA-UI backend binary..."
 GO111MODULE=on go build -o "$BIN_PATH" ./cmd/server
 chmod +x "$BIN_PATH"
 
-# --- Build Frontend ---
-
+# --------------------------
+# Build frontend (React/Vite)
+# --------------------------
 echo "[*] Building frontend..."
 if [ -d "$PANEL_DIR/web" ]; then
   cd "$PANEL_DIR/web"
@@ -86,25 +114,20 @@ else
   echo "Warning: web directory not found, skipping frontend build"
 fi
 
-# --- Ensure DB directory exists ---
-
-echo "[*] Creating DB directory: $DB_DIR"
+# --------------------------
+# DB directory
+# --------------------------
+echo "[*] Creating DB directory at $DB_DIR ..."
 mkdir -p "$DB_DIR"
 chmod 755 "$DB_DIR"
 
-# --- Ensure Kumo directories exist (if already installed, this is no-op) ---
-
-echo "[*] Ensuring Kumo policy and DKIM directories exist..."
-mkdir -p /opt/kumomta/etc/policy
-mkdir -p /opt/kumomta/etc/dkim
-
-# --- Create systemd service ---
-
-echo "[*] Creating systemd service at $SERVICE_FILE"
-
+# --------------------------
+# systemd service for kumomta-ui
+# --------------------------
+echo "[*] Creating systemd service at $SERVICE_FILE ..."
 cat >"$SERVICE_FILE" <<EOF
 [Unit]
-Description=Kumo UI Backend
+Description=KumoMTA UI Backend
 After=network.target
 
 [Service]
@@ -120,48 +143,56 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# --- Firewall configuration ---
+# --------------------------
+# SELinux: allow executing binary from /opt/kumomta-ui
+# --------------------------
+echo "[*] Applying SELinux context for $BIN_PATH ..."
+if command -v semanage >/dev/null 2>&1; then
+  semanage fcontext -a -t bin_t "${PANEL_DIR}(/.*)?" 2>/dev/null || semanage fcontext -m -t bin_t "${PANEL_DIR}(/.*)?"
+  restorecon -Rv "$PANEL_DIR" || true
+fi
+chcon -t bin_t "$BIN_PATH" || true
 
-echo "[*] Configuring firewall..."
-
-systemctl enable firewalld --now || true
-
-if [ -n "$PANEL_DOMAIN" ]; then
-  # Using nginx + HTTPS; open 80 and 443
-  firewall-cmd --permanent --add-service=http || true
-  firewall-cmd --permanent --add-service=https || true
-  # No need to expose 9000 in this mode
-else
-  # No domain/HTTPS: expose :9000 directly
-  firewall-cmd --permanent --add-port=9000/tcp || true
+# --------------------------
+# SELinux: allow nginx to talk to backend on 9000
+# --------------------------
+if command -v semanage >/dev/null 2>&1; then
+  echo "[*] Allowing httpd_t (nginx) to connect to network + port 9000 via SELinux..."
+  setsebool -P httpd_can_network_connect on || true
+  semanage port -a -t http_port_t -p tcp 9000 2>/dev/null || semanage port -m -t http_port_t -p tcp 9000 || true
 fi
 
-firewall-cmd --reload || true
-
-# --- Start backend service ---
-
-echo "[*] Enabling and starting kumomta-ui.service..."
+# --------------------------
+# systemd: reload & enable services
+# --------------------------
+echo "[*] Reloading systemd daemon..."
 systemctl daemon-reload
-systemctl enable kumomta-ui
-systemctl restart kumomta-ui
 
-sleep 2
-systemctl status kumomta-ui --no-pager || true
+echo "[*] Enabling and starting KumoMTA daemon..."
+systemctl enable --now kumomta || true
 
-# --- Configure nginx + HTTPS if domain provided ---
+echo "[*] Enabling KumoMTA-UI service..."
+systemctl enable --now kumomta-ui || true
 
+# --------------------------
+# nginx configuration (if DOMAIN)
+# --------------------------
 if [ -n "$PANEL_DOMAIN" ]; then
-  echo "[*] Configuring nginx reverse proxy for $PANEL_DOMAIN -> 127.0.0.1:9000"
-
-  NGINX_CONF="/etc/nginx/conf.d/kumomta-ui.conf"
-
+  echo "[*] Writing nginx config to $NGINX_CONF ..."
   cat >"$NGINX_CONF" <<EOF
 server {
     listen 80;
     server_name $PANEL_DOMAIN;
 
+    root $PANEL_DIR/web/dist;
+    index index.html;
+
     location / {
-        proxy_pass http://127.0.0.1:9000;
+        try_files \$uri /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:9000/api/;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -170,60 +201,69 @@ server {
 }
 EOF
 
-  systemctl enable nginx --now
-  nginx -t && systemctl reload nginx
+  echo "[*] Testing nginx config..."
+  nginx -t
 
-  echo "[*] Requesting Let's Encrypt certificate for $PANEL_DOMAIN..."
-  echo "    Make sure DNS A record points to this server BEFORE this step."
+  echo "[*] Enabling and starting nginx..."
+  systemctl enable --now nginx
 
-  certbot --nginx \
-    -d "$PANEL_DOMAIN" \
-    -m "$LE_EMAIL" \
-    --agree-tos \
-    --non-interactive \
-    --redirect || echo "Warning: certbot failed; you can rerun certbot manually later."
+  echo "[*] Configuring firewalld for HTTP/HTTPS..."
+  firewall-cmd --permanent --add-service=http || true
+  firewall-cmd --permanent --add-service=https || true
+  firewall-cmd --reload || true
+
+  echo "[*] Requesting Let's Encrypt certificate via certbot..."
+  certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos -m "$LE_EMAIL" --redirect || echo "Warning: certbot failed; check DNS and try manually."
+
+else
+  echo "[*] No PANEL_DOMAIN provided: running UI directly on http://SERVER_IP:9000"
+  echo "[*] Opening port 9000 in firewalld..."
+  firewall-cmd --permanent --add-port=9000/tcp || true
+  firewall-cmd --reload || true
 fi
 
-# --- Detect primary server IP ---
-
+# --------------------------
+# Final info
+# --------------------------
 VPS_IP=""
 if command -v ip >/dev/null 2>&1; then
   VPS_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -n1)
 fi
-
 if [ -z "$VPS_IP" ] && command -v hostname >/dev/null 2>&1; then
   VPS_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 fi
 
-# --- Final message ---
-
-echo ""
+echo
 echo "==========================================="
-echo "       Installation Complete!"
+echo "      KumoMTA + KumoMTA-UI Installed"
 echo "==========================================="
-echo ""
+echo
 
 if [ -n "$PANEL_DOMAIN" ]; then
   echo "Panel URL:  https://$PANEL_DOMAIN/"
   echo "API URL:    https://$PANEL_DOMAIN/api"
-  echo ""
-  echo "DNS reminder: ensure an A record points $PANEL_DOMAIN -> $VPS_IP"
+  if [ -n "$VPS_IP" ]; then
+    echo
+    echo "DNS reminder: point A record $PANEL_DOMAIN -> $VPS_IP"
+  fi
 else
   if [ -n "$VPS_IP" ]; then
     echo "Panel URL:  http://$VPS_IP:9000/"
     echo "API URL:    http://$VPS_IP:9000/api"
   else
-    echo "Could not auto-detect VPS IP."
-    echo "Panel URL (example):  http://<your-vps-ip>:9000/"
-    echo "API URL (example):    http://<your-vps-ip>:9000/api"
+    echo "Panel URL:  http://<YOUR_SERVER_IP>:9000/"
+    echo "API URL:    http://<YOUR_SERVER_IP>:9000/api"
   fi
 fi
 
-echo ""
-echo "Open the Panel URL in your browser and use 'First-time Setup' to create the admin user."
-echo ""
+echo
+echo "Next steps:"
+echo "  1) Open the Panel URL in your browser"
+echo "  2) Use 'First-time Setup' to create the admin user"
+echo
 echo "Useful commands:"
-echo "  - Check service status: systemctl status kumomta-ui"
-echo "  - View logs: journalctl -u kumomta-ui -f"
-echo "  - Restart service: systemctl restart kumomta-ui"
-echo ""
+echo "  systemctl status kumomta-ui"
+echo "  journalctl -u kumomta-ui -f"
+echo "  systemctl restart kumomta-ui"
+echo "  systemctl status kumomta"
+echo
