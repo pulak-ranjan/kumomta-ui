@@ -34,11 +34,28 @@ func (s *Server) Router() http.Handler {
 	// TODO: add auth middleware here later
 
 	// Routes
+		// Routes
 	r.Get("/api/status", s.handleStatus)
 	r.Get("/api/settings", s.handleGetSettings)
 	r.Post("/api/settings", s.handleSaveSettings)
 
-	// TODO: /api/domains, /api/senders, /api/apply, /api/dns, /api/ai-summary
+	// Domains + Senders
+	r.Route("/api/domains", func(r chi.Router) {
+		r.Get("/", s.handleListDomains)
+		r.Post("/", s.handleSaveDomain)
+
+		r.Route("/{domainID}", func(r chi.Router) {
+			r.Get("/", s.handleGetDomain)
+			r.Delete("/", s.handleDeleteDomain)
+
+			r.Get("/senders", s.handleListSenders)
+			r.Post("/senders", s.handleSaveSender)
+		})
+	})
+
+	// Delete a sender by ID
+	r.Delete("/api/senders/{senderID}", s.handleDeleteSenderByID)
+
 
 	return r
 }
