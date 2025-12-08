@@ -79,6 +79,29 @@ systemctl restart kumomta-ui
 sleep 2
 systemctl status kumomta-ui --no-pager || true
 
+# 9. Detect primary server IP
+VPS_IP=""
+# Try via 'ip route'
+if command -v ip >/dev/null 2>&1; then
+  VPS_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ {for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -n1)
+fi
+
+# Fallback to hostname -I
+if [ -z "$VPS_IP" ] && command -v hostname >/dev/null 2>&1; then
+  VPS_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+
+# Final message
 echo "=== Installation complete ==="
-echo "Backend should be accessible at: http://<VPS_IP>:9000"
-echo "Use /api/auth/register to create the first admin."
+
+if [ -n "$VPS_IP" ]; then
+  echo "Panel URL:  http://$VPS_IP:9000/"
+  echo "API URL:    http://$VPS_IP:9000/api"
+else
+  echo "Could not auto-detect VPS IP."
+  echo "Panel URL (example):  http://<your-vps-ip>:9000/"
+  echo "API URL (example):    http://<your-vps-ip>:9000/api"
+fi
+
+echo
+echo "Open the Panel URL in your browser and use 'First-time Setup' to create the admin user."
