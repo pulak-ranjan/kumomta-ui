@@ -1,457 +1,261 @@
 # KumoMTA UI API Documentation
 
-Base URL: `http://your-server:9000/api` or `https://your-domain/api`
+**Base URL:** `http://your-server:9000/api` or `https://your-domain/api`
 
-## Authentication
+## 🔐 Authentication
 
-All protected endpoints require a Bearer token in the Authorization header:
+All protected endpoints require a Bearer token in the `Authorization` header:
+`Authorization: Bearer <token>`
 
-```
-Authorization: Bearer <token>
-```
+### Public Endpoints
 
-Tokens are valid for **7 days** and regenerated on each login.
+#### Register Admin
+Create the first admin account (only allowed if no admin exists).
+- **POST** `/auth/register`
+- **Body:** `{ "email": "admin@example.com", "password": "StrongPassword1!" }`
 
----
+#### Login
+Authenticate and receive a session token.
+- **POST** `/auth/login`
+- **Body:** `{ "email": "admin@example.com", "password": "..." }`
+- **Response (Success):** `{ "token": "...", "email": "..." }`
+- **Response (2FA Required):** `{ "requires_2fa": true, "temp_token": "..." }`
 
-## Public Endpoints
-
-### GET /api/status
-
-Check service status (no authentication required).
-
-**Response:**
-```json
-{
-  "api": "ok",
-  "kumomta": "active",
-  "dovecot": "active",
-  "fail2ban": "active"
-}
-```
+#### Verify 2FA (Login Step 2)
+Complete login if 2FA is enabled.
+- **POST** `/auth/verify-2fa`
+- **Header:** `X-Temp-Token: <temp_token_from_login>`
+- **Body:** `{ "code": "123456" }`
+- **Response:** `{ "token": "...", "email": "..." }`
 
 ---
 
-## Authentication
+### Protected Profile & Security
 
-### POST /api/auth/register
+#### Get Current User
+- **GET** `/auth/me`
 
-Create the first admin user. Only works when no admin exists.
+#### Logout
+Invalidate the current session token.
+- **POST** `/auth/logout`
 
-**Request:**
-```json
-{
-  "email": "admin@example.com",
-  "password": "SecurePass123"
-}
-```
+#### Setup 2FA
+Initialize TOTP setup (returns QR code URI).
+- **POST** `/auth/setup-2fa`
+- **Body:** `{ "password": "current_password" }`
+- **Response:** `{ "secret": "...", "uri": "otpauth://..." }`
 
-**Validation:**
-- Email must be valid format
-- Password must be 8+ characters with at least 1 letter and 1 number
+#### Enable 2FA
+Confirm and activate 2FA using a code.
+- **POST** `/auth/enable-2fa`
+- **Body:** `{ "code": "123456" }`
 
-**Response (200):**
-```json
-{
-  "token": "abc123...",
-  "email": "admin@example.com"
-}
-```
+#### Disable 2FA
+Turn off 2FA authentication.
+- **POST** `/auth/disable-2fa`
+- **Body:** `{ "password": "...", "code": "123456" }`
 
-**Error (403):** Admin already exists
+#### Update Theme
+Set user UI preference.
+- **POST** `/auth/theme`
+- **Body:** `{ "theme": "dark" }` (or `light`, `system`)
 
----
-
-### POST /api/auth/login
-
-Authenticate and get a new token.
-
-**Request:**
-```json
-{
-  "email": "admin@example.com",
-  "password": "SecurePass123"
-}
-```
-
-**Response (200):**
-```json
-{
-  "token": "xyz789...",
-  "email": "admin@example.com"
-}
-```
-
-**Error (401):** Invalid credentials
+#### List Sessions
+View active login sessions for the user.
+- **GET** `/auth/sessions`
 
 ---
 
-### GET /api/auth/me
+## 📧 Domains & Senders
 
-Get current user info. **Requires authentication.**
+#### List Domains
+Get all configured domains and their senders.
+- **GET** `/domains`
 
-**Response:**
-```json
-{
-  "email": "admin@example.com"
-}
-```
+#### Create Domain
+- **POST** `/domains`
+- **Body:** `{ "name": "example.com", "mail_host": "mail.example.com", "bounce_host": "bounce.example.com" }`
 
----
+#### Get Domain
+- **GET** `/domains/{id}`
 
-## Settings
+#### Update Domain
+- **PUT** `/domains/{id}`
+- **Body:** `{ "dmarc_policy": "reject", ... }`
 
-### GET /api/settings
-
-Get application settings. **Requires authentication.**
-
-**Response:**
-```json
-{
-  "main_hostname": "mta.example.com",
-  "main_server_ip": "1.2.3.4",
-  "relay_ips": "127.0.0.1,10.0.0.5",
-  "ai_provider": "openai"
-}
-```
-
-Note: `ai_api_key` is never returned (write-only).
+#### Delete Domain
+Deletes domain and all associated senders.
+- **DELETE** `/domains/{id}`
 
 ---
 
-### POST /api/settings
+#### List Senders
+- **GET** `/domains/{domainID}/senders`
 
-Save application settings. **Requires authentication.**
+#### Create Sender
+- **POST** `/domains/{domainID}/senders`
+- **Body:** `{ "local_part": "newsletter", "ip": "1.2.3.4", "smtp_password": "..." }`
 
-**Request:**
-```json
-{
-  "main_hostname": "mta.example.com",
-  "main_server_ip": "1.2.3.4",
-  "relay_ips": "127.0.0.1,10.0.0.5",
-  "ai_provider": "openai",
-  "ai_api_key": "sk-..."
-}
-```
+#### Update Sender
+- **PUT** `/senders/{id}`
 
-**Response:**
-```json
-{
-  "status": "ok"
-}
-```
+#### Delete Sender
+- **DELETE** `/senders/{id}`
+
+#### Auto-Setup Sender
+Automatically generate DKIM keys and create a system bounce account for a sender.
+- **POST** `/domains/{domainID}/senders/{id}/setup`
 
 ---
 
-## Domains
+## 📬 Bounce Accounts
 
-### GET /api/domains
+#### List Bounce Accounts
+- **GET** `/bounces`
 
-List all domains with their senders. **Requires authentication.**
+#### Create/Update Bounce Account
+Creates DB entry AND system user (useradd).
+- **POST** `/bounces`
+- **Body:** `{ "username": "b-news", "domain": "example.com", "password": "..." }`
 
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "name": "example.com",
-    "mail_host": "mail.example.com",
-    "bounce_host": "bounce.example.com",
-    "senders": [
-      {
-        "id": 1,
-        "domain_id": 1,
-        "local_part": "info",
-        "email": "info@example.com",
-        "ip": "1.2.3.4"
-      }
-    ]
-  }
-]
-```
+#### Delete Bounce Account
+- **DELETE** `/bounces/{id}`
 
-Note: `smtp_password` is never returned (write-only).
+#### Apply System State
+Ensure all DB bounce accounts exist as Linux users.
+- **POST** `/bounces/apply`
 
 ---
 
-### GET /api/domains/{id}
+## 🛡️ DNS & Authentication (DKIM/DMARC)
 
-Get a single domain by ID. **Requires authentication.**
+#### List DKIM Keys
+View all active DKIM public keys and selectors.
+- **GET** `/dkim/records`
 
-**Response:** Same structure as single item in list.
+#### Generate DKIM
+Generate RSA-2048 keys for a domain or specific user.
+- **POST** `/dkim/generate`
+- **Body:** `{ "domain": "example.com", "local_part": "optional_selector" }`
 
----
+#### Get DMARC Record
+- **GET** `/dmarc/{domainID}`
 
-### POST /api/domains
+#### Set DMARC Policy
+Generate and save DMARC settings.
+- **POST** `/dmarc/{domainID}`
+- **Body:** `{ "policy": "quarantine", "percentage": 100, "rua": "..." }`
 
-Create or update a domain. **Requires authentication.**
-
-**Create (id = 0 or omitted):**
-```json
-{
-  "name": "example.com",
-  "mail_host": "mail.example.com",
-  "bounce_host": "bounce.example.com"
-}
-```
-
-**Update (id provided):**
-```json
-{
-  "id": 1,
-  "name": "example.com",
-  "mail_host": "mail.example.com",
-  "bounce_host": "bounce.example.com"
-}
-```
+#### Get All DNS
+Preview A, MX, SPF, DMARC, and DKIM records for a domain.
+- **GET** `/dns/{domainID}`
 
 ---
 
-### DELETE /api/domains/{id}
+## 🔔 Webhooks & Automation
 
-Delete a domain and all its senders. **Requires authentication.**
+#### Get Webhook Settings
+- **GET** `/webhooks/settings`
 
-**Response:**
-```json
-{
-  "status": "deleted"
-}
-```
+#### Update Webhook Settings
+Configure Slack/Discord integration.
+- **POST** `/webhooks/settings`
+- **Body:** `{ "webhook_url": "...", "webhook_enabled": true, "bounce_alert_pct": 5.0 }`
 
----
+#### Test Webhook
+Send a test payload.
+- **POST** `/webhooks/test`
+- **Body:** `{ "webhook_url": "..." }`
 
-## Senders
+#### Webhook Logs
+View recent webhook dispatch history.
+- **GET** `/webhooks/logs`
 
-### GET /api/domains/{domainId}/senders
-
-List senders for a domain. **Requires authentication.**
-
----
-
-### POST /api/domains/{domainId}/senders
-
-Create or update a sender. **Requires authentication.**
-
-**Request:**
-```json
-{
-  "id": 0,
-  "local_part": "info",
-  "email": "info@example.com",
-  "ip": "1.2.3.4",
-  "smtp_password": "secret123"
-}
-```
+#### Manual Trigger: Check Bounces
+Analyze bounce rates immediately and alert if high.
+- **POST** `/webhooks/check-bounces`
 
 ---
 
-### DELETE /api/senders/{id}
+## 🖥️ System & Networking
 
-Delete a sender by ID. **Requires authentication.**
+#### Dashboard Stats
+Get CPU, RAM, Disk, and Service status.
+- **GET** `/dashboard/stats`
 
----
+#### List System IPs
+- **GET** `/system/ips`
 
-## DKIM
+#### Add IP
+- **POST** `/system/ips`
+- **Body:** `{ "value": "1.2.3.4", "interface": "eth0" }`
 
-### GET /api/dkim/records
+#### Bulk Add IPs
+- **POST** `/system/ips/bulk`
+- **Body:** `{ "ips": ["1.2.3.4", "5.6.7.8"] }`
 
-List all DKIM DNS records. **Requires authentication.**
+#### Add IPs by CIDR
+- **POST** `/system/ips/cidr`
+- **Body:** `{ "cidr": "192.168.1.0/24" }`
 
-**Response:**
-```json
-[
-  {
-    "domain": "example.com",
-    "selector": "info",
-    "dns_name": "info._domainkey.example.com",
-    "dns_value": "v=DKIM1; k=rsa; p=MIIBIjAN..."
-  }
-]
-```
+#### Auto-Detect IPs
+Scan network interfaces for available IPv4 addresses.
+- **POST** `/system/ips/detect`
 
----
+#### Manual Trigger: Check Blacklists
+Scan system IPs against RBLs (Spamhaus, etc.) and alert via Webhook.
+- **POST** `/system/check-blacklist`
 
-### POST /api/dkim/generate
+#### Manual Trigger: Security Audit
+Scan for file permission issues and open ports.
+- **POST** `/system/check-security`
 
-Generate DKIM keys. **Requires authentication.**
-
-**For specific sender:**
-```json
-{
-  "domain": "example.com",
-  "local_part": "info"
-}
-```
-
-**For all senders in domain:**
-```json
-{
-  "domain": "example.com"
-}
-```
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "domain": "example.com",
-  "message": "dkim keys generated for all senders"
-}
-```
+#### AI Analysis
+Analyze logs or health data using OpenAI/DeepSeek.
+- **POST** `/system/ai-analyze`
+- **Body:** `{ "type": "logs" }` (or `"health"`)
 
 ---
 
-## Bounce Accounts
+## ⚙️ Configuration & Queue
 
-### GET /api/bounces
+#### Preview Config
+Generate KumoMTA config files (Lua/TOML) in memory.
+- **GET** `/config/preview`
 
-List all bounce accounts. **Requires authentication.**
+#### Apply Config
+Write configs to disk (`/opt/kumomta/etc/policy`) and restart service.
+- **POST** `/config/apply`
 
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "username": "bounce1",
-    "domain": "example.com",
-    "notes": "Main bounce handler"
-  }
-]
-```
+#### View Queue
+- **GET** `/queue`
+- **Query:** `?limit=100`
 
-Note: `password` is never returned.
+#### Queue Stats
+- **GET** `/queue/stats`
 
----
+#### Delete Message
+- **DELETE** `/queue/{id}`
 
-### POST /api/bounces
-
-Create or update a bounce account. **Requires authentication.**
-
-Also creates the Linux system user and Maildir structure.
-
-**Request:**
-```json
-{
-  "id": 0,
-  "username": "bounce1",
-  "password": "secret123",
-  "domain": "example.com",
-  "notes": "Main bounce handler"
-}
-```
-
-For updates, leave `password` empty to keep existing password.
+#### Flush Queue
+Force retry of deferred messages.
+- **POST** `/queue/flush`
 
 ---
 
-### DELETE /api/bounces/{id}
+## 📝 Logs
 
-Delete a bounce account from database. **Requires authentication.**
-
-Note: Does not delete the system user.
-
----
-
-### POST /api/bounces/apply
-
-Ensure all bounce accounts exist as system users. **Requires authentication.**
-
-**Response:**
-```json
-{
-  "status": "ok"
-}
-```
+#### Service Logs
+View tail of system logs via `journalctl`.
+- **GET** `/logs/kumomta?lines=100`
+- **GET** `/logs/dovecot?lines=100`
+- **GET** `/logs/fail2ban?lines=100`
 
 ---
 
-## Configuration
+## 📥 Import
 
-### GET /api/config/preview
-
-Preview generated KumoMTA configuration files. **Requires authentication.**
-
-**Response:**
-```json
-{
-  "sources_toml": "...",
-  "queues_toml": "...",
-  "listener_domains_toml": "...",
-  "dkim_data_toml": "...",
-  "init_lua": "..."
-}
-```
-
----
-
-### POST /api/config/apply
-
-Write configs, validate, and restart KumoMTA. **Requires authentication.**
-
-**Response (success):**
-```json
-{
-  "apply_result": {
-    "sources_path": "/opt/kumomta/etc/policy/sources.toml",
-    "queues_path": "/opt/kumomta/etc/policy/queues.toml",
-    "listener_domains_path": "/opt/kumomta/etc/policy/listener_domains.toml",
-    "dkim_data_path": "/opt/kumomta/etc/policy/dkim_data.toml",
-    "init_lua_path": "/opt/kumomta/etc/policy/init.lua",
-    "validation_ok": true,
-    "validation_log": "",
-    "restart_ok": true,
-    "restart_log": ""
-  }
-}
-```
-
-**Response (error):**
-```json
-{
-  "apply_result": { ... },
-  "error": "kumod validation failed: ..."
-}
-```
-
----
-
-## Logs
-
-### GET /api/logs/kumomta?lines=100
-
-Get KumoMTA service logs. **Requires authentication.**
-
-### GET /api/logs/dovecot?lines=100
-
-Get Dovecot service logs. **Requires authentication.**
-
-### GET /api/logs/fail2ban?lines=100
-
-Get Fail2Ban service logs. **Requires authentication.**
-
-**Response:**
-```json
-{
-  "service": "kumomta",
-  "logs": "... log content ..."
-}
-```
-
----
-
-## Error Responses
-
-All errors follow this format:
-
-```json
-{
-  "error": "description of the error"
-}
-```
-
-Common HTTP status codes:
-- `400` - Bad request (invalid input)
-- `401` - Unauthorized (missing/invalid/expired token)
-- `403` - Forbidden (action not allowed)
-- `404` - Not found
-- `500` - Internal server error
+#### Bulk Import
+Import domains and senders from CSV.
+- **POST** `/import/csv`
+- **Form Data:** `file` (CSV file with headers: `domain, localpart, ip, password`)
