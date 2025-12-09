@@ -9,6 +9,7 @@ export default function DMARCPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
+  // FIX: Use correct token key
   const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -17,18 +18,26 @@ export default function DMARCPage() {
   const fetchDomains = async () => {
     try {
       const res = await fetch('/api/domains', { headers });
-      setDomains(await res.json() || []);
-    } catch (e) { console.error(e); }
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      const data = await res.json();
+      setDomains(Array.isArray(data) ? data : []);
+    } catch (e) { console.error(e); setDomains([]); }
   };
 
   const selectDomain = async (domain) => {
     setSelected(domain);
-    setDmarc({ policy: domain.dmarc_policy || 'none', rua: domain.dmarc_rua || '', ruf: domain.dmarc_ruf || '', percentage: domain.dmarc_percentage || 100 });
+    setDmarc({ 
+      policy: domain.dmarc_policy || 'none', 
+      rua: domain.dmarc_rua || '', 
+      ruf: domain.dmarc_ruf || '', 
+      percentage: domain.dmarc_percentage || 100 
+    });
     try {
-      const res = await fetch(`/api/dmarc/${domain.ID}`, { headers });
-      setRecord(await res.json());
-      const dnsRes = await fetch(`/api/dns/${domain.ID}`, { headers });
-      setAllDns(await dnsRes.json());
+      const res = await fetch(`/api/dmarc/${domain.id}`, { headers }); // lowercase id
+      if (res.ok) setRecord(await res.json());
+      
+      const dnsRes = await fetch(`/api/dns/${domain.id}`, { headers });
+      if (dnsRes.ok) setAllDns(await dnsRes.json());
     } catch (e) { console.error(e); }
   };
 
@@ -37,8 +46,12 @@ export default function DMARCPage() {
     if (!selected) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/dmarc/${selected.ID}`, { method: 'POST', headers, body: JSON.stringify(dmarc) });
-      if (res.ok) { setRecord(await res.json()); setMessage('✅ DMARC saved!'); fetchDomains(); }
+      const res = await fetch(`/api/dmarc/${selected.id}`, { method: 'POST', headers, body: JSON.stringify(dmarc) });
+      if (res.ok) { 
+        setRecord(await res.json()); 
+        setMessage('✅ DMARC saved!'); 
+        fetchDomains(); 
+      }
       else setMessage('❌ Failed to save');
     } catch (e) { setMessage('❌ Error: ' + e.message); }
     setSaving(false);
@@ -62,9 +75,9 @@ export default function DMARCPage() {
           <h2 className="text-lg font-semibold mb-4">Select Domain</h2>
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {domains.map(d => (
-              <button key={d.ID} onClick={() => selectDomain(d)}
-                className={`w-full text-left p-3 rounded ${selected?.ID === d.ID ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
-                <div className="font-semibold">{d.Name}</div>
+              <button key={d.id} onClick={() => selectDomain(d)}
+                className={`w-full text-left p-3 rounded ${selected?.id === d.id ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                <div className="font-semibold">{d.name}</div>
                 <div className="text-sm text-gray-400">Policy: {d.dmarc_policy || 'none'}</div>
               </button>
             ))}
