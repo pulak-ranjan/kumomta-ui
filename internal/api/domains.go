@@ -2,42 +2,27 @@ package api
 
 import (
 	"crypto/rand"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm/clause" // Required for OnConflict
 
 	"github.com/pulak-ranjan/kumomta-ui/internal/core"
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
 
-// DTOs for Domains and Senders as seen by the API/UI.
-
-type domainDTO struct {
-	ID         uint        `json:"id"`
-	Name       string      `json:"name"`
-	MailHost   string      `json:"mail_host"`
-	BounceHost string      `json:"bounce_host"`
-	Senders    []senderDTO `json:"senders"`
-}
-
-type senderDTO struct {
-	ID             uint   `json:"id"`
-	DomainID       uint   `json:"domain_id"`
-	LocalPart      string `json:"local_part"`
-	Email          string `json:"email"`
-	IP             string `json:"ip"`
-	SMTPPassword   string `json:"smtp_password"`
-	HasDKIM        bool   `json:"has_dkim"`        
-	BounceUsername string `json:"bounce_username"` 
-}
+// ... [Keep existing structs: domainDTO, senderDTO] ...
 
 // Helper to generate a random password for bounce accounts
 func generateRandomPassword() string {
@@ -48,7 +33,6 @@ func generateRandomPassword() string {
 
 // Helper to check if DKIM key exists on disk
 func checkDKIMExists(domain, selector string) bool {
-	// Path: /opt/kumomta/etc/dkim/<domain>/<selector>.key
 	path := filepath.Join("/opt/kumomta/etc/dkim", domain, selector+".key")
 	if _, err := os.Stat(path); err == nil {
 		return true
@@ -57,7 +41,133 @@ func checkDKIMExists(domain, selector string) bool {
 }
 
 // ----------------------
-// Domain Handlers
+// NEW: Import Handler
+// ----------------------
+
+// POST /api/domains/import
+// Expects multipart file upload (csv)
+// Format: Domain, LocalPart, IP, Password
+func (s *Server) handleImportSenders(w http.ResponseWriter, r *http.Request) {
+	// 1. Parse File
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file required"})
+		return
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	rows, err := reader.ReadAll()
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid csv format"})
+		return
+	}
+
+	successCount := 0
+	errorsLog := []string{}
+
+	// 2. Iterate Rows (Skip header if it looks like a header)
+	for i, row := range rows {
+		if len(row) < 4 {
+			errorsLog = append(errorsLog, fmt.Sprintf("Row %d: not enough columns", i+1))
+			continue
+		}
+
+		rawDomain := strings.TrimSpace(row[0])
+		rawLocal := strings.TrimSpace(row[1])
+		rawIP := strings.TrimSpace(row[2])
+		rawPass := strings.TrimSpace(row[3])
+
+		// Skip header row if present
+		if i == 0 && strings.ToLower(rawDomain) == "domain" {
+			continue
+		}
+
+		if rawDomain == "" || rawLocal == "" || rawPass == "" {
+			continue
+		}
+
+		// A. Find or Create Domain
+		d, err := s.Store.GetDomainByName(rawDomain)
+		if err == store.ErrNotFound {
+			// Auto-create domain
+			newD := &models.Domain{
+				Name:       rawDomain,
+				MailHost:   "mail." + rawDomain,
+				BounceHost: "bounce." + rawDomain,
+			}
+			if err := s.Store.CreateDomain(newD); err != nil {
+				errorsLog = append(errorsLog, fmt.Sprintf("Row %d: failed to create domain %s", i+1, rawDomain))
+				continue
+			}
+			d = newD
+		} else if err != nil {
+			errorsLog = append(errorsLog, fmt.Sprintf("Row %d: DB error looking up domain", i+1))
+			continue
+		}
+
+		// B. Ensure IP exists in SystemIPs (Auto-add IP)
+		if rawIP != "" {
+			s.Store.CreateSystemIP(&models.SystemIP{Value: rawIP})
+		}
+
+		// C. Create Sender
+		email := rawLocal + "@" + rawDomain
+		sender := &models.Sender{
+			DomainID:     d.ID,
+			LocalPart:    rawLocal,
+			Email:        email,
+			IP:           rawIP,
+			SMTPPassword: rawPass,
+		}
+
+		// Use Upsert (Save) logic manually or just Create
+		// Here we assume create new. If duplicate localpart, it might error depending on schema constraints.
+		// Let's check existence first to be safe or just create.
+		// Using CreateSender:
+		if err := s.Store.CreateSender(sender); err != nil {
+			errorsLog = append(errorsLog, fmt.Sprintf("Row %d: failed to create sender %s", i+1, email))
+			continue
+		}
+
+		// D. Auto-DKIM
+		if err := core.GenerateDKIMKey(rawDomain, rawLocal); err != nil {
+			// log but don't fail
+			fmt.Printf("Import Warning: DKIM failed for %s: %v\n", email, err)
+		}
+
+		// E. Auto-Bounce
+		bounceUser := fmt.Sprintf("b-%s", rawLocal)
+		bouncePass := generateRandomPassword()
+		bounceHash, _ := bcrypt.GenerateFromPassword([]byte(bouncePass), bcrypt.DefaultCost)
+		bounceAcc := &models.BounceAccount{
+			Username:     bounceUser,
+			PasswordHash: string(bounceHash),
+			Domain:       rawDomain,
+			Notes:        "Imported auto-create",
+		}
+		// Create in DB and System
+		if err := s.Store.CreateBounceAccount(bounceAcc); err == nil {
+			core.EnsureBounceAccount(*bounceAcc, bouncePass)
+		}
+
+		successCount++
+	}
+
+	msg := fmt.Sprintf("Imported %d senders.", successCount)
+	if len(errorsLog) > 0 {
+		msg += fmt.Sprintf(" Errors: %d", len(errorsLog))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "ok",
+		"message": msg,
+		"errors":  errorsLog,
+	})
+}
+
+// ----------------------
+// Existing Handlers...
 // ----------------------
 
 // GET /api/domains
@@ -69,7 +179,6 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-fetch all bounce accounts to map for O(1) lookup
 	bounces, _ := s.Store.ListBounceAccounts()
 	bounceMap := make(map[string]bool)
 	for _, b := range bounces {
@@ -78,23 +187,18 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]domainDTO, 0, len(domains))
 	for _, d := range domains {
-		dDTO := domainToDTO(&d, false) // get base without senders first
+		dDTO := domainToDTO(&d, false)
 		dDTO.Senders = make([]senderDTO, 0, len(d.Senders))
 
 		for _, sdr := range d.Senders {
 			sDTO := senderToDTO(&sdr)
-
-			// 1. Check DKIM
 			if sdr.LocalPart != "" {
 				sDTO.HasDKIM = checkDKIMExists(d.Name, sdr.LocalPart)
 			}
-
-			// 2. Check Bounce (Convention: b-localpart)
 			expectedBounce := fmt.Sprintf("b-%s", sdr.LocalPart)
 			if bounceMap[expectedBounce] {
 				sDTO.BounceUsername = expectedBounce
 			}
-
 			dDTO.Senders = append(dDTO.Senders, sDTO)
 		}
 		out = append(out, dDTO)
@@ -122,11 +226,9 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prepare single DTO with status checks
 	dDTO := domainToDTO(d, false)
 	dDTO.Senders = make([]senderDTO, 0, len(d.Senders))
 	
-	// Bounce map
 	bounces, _ := s.Store.ListBounceAccounts()
 	bounceMap := make(map[string]bool)
 	for _, b := range bounces {
@@ -161,7 +263,6 @@ func (s *Server) handleSaveDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create
 	if dto.ID == 0 {
 		d := &models.Domain{
 			Name:       dto.Name,
@@ -177,7 +278,6 @@ func (s *Server) handleSaveDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update
 	d, err := s.Store.GetDomainByID(dto.ID)
 	if err != nil {
 		if err == store.ErrNotFound {
@@ -219,10 +319,6 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-// ----------------------
-// Sender Handlers
-// ----------------------
-
 // GET /api/domains/{domainID}/senders
 func (s *Server) handleListSenders(w http.ResponseWriter, r *http.Request) {
 	domainID, err := parseUintParam(chi.URLParam(r, "domainID"))
@@ -231,7 +327,6 @@ func (s *Server) handleListSenders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Need domain name for DKIM check
 	d, err := s.Store.GetDomainByID(domainID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load domain info"})
@@ -245,7 +340,6 @@ func (s *Server) handleListSenders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bounce map
 	bounces, _ := s.Store.ListBounceAccounts()
 	bounceMap := make(map[string]bool)
 	for _, b := range bounces {
@@ -284,7 +378,6 @@ func (s *Server) handleSaveSender(w http.ResponseWriter, r *http.Request) {
 
 	dto.DomainID = domainID
 
-	// Create
 	if dto.ID == 0 {
 		d, err := s.Store.GetDomainByID(domainID)
 		if err != nil {
@@ -311,16 +404,12 @@ func (s *Server) handleSaveSender(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// --- AUTOMATION START ---
-		
-		// 1. Auto-Generate DKIM Key
 		if sdr.LocalPart != "" {
 			if err := core.GenerateDKIMKey(d.Name, sdr.LocalPart); err != nil {
 				s.Store.LogError(err)
 			}
 		}
 
-		// 2. Auto-Create Bounce Account (System User)
 		bounceUser := fmt.Sprintf("b-%s", sdr.LocalPart)
 		bouncePass := generateRandomPassword()
 		bounceHash, _ := bcrypt.GenerateFromPassword([]byte(bouncePass), bcrypt.DefaultCost)
@@ -332,20 +421,14 @@ func (s *Server) handleSaveSender(w http.ResponseWriter, r *http.Request) {
 			Notes:        fmt.Sprintf("Auto-created for sender %s", sdr.Email),
 		}
 
-		// Save bounce to DB
 		if err := s.Store.CreateBounceAccount(bounceAcc); err == nil {
-			// Apply to system (useradd)
 			core.EnsureBounceAccount(*bounceAcc, bouncePass)
 		} else {
-			// Duplicate? Ignore logic for now, just log
 			s.Store.LogError(err)
 		}
-		// --- AUTOMATION END ---
 
-		// Return DTO with checks
 		respDTO := senderToDTO(sdr)
 		respDTO.HasDKIM = checkDKIMExists(d.Name, sdr.LocalPart)
-		// Check bounce
 		if _, err := s.Store.GetBounceAccountByID(bounceAcc.ID); err == nil {
 			respDTO.BounceUsername = bounceUser
 		}
@@ -354,7 +437,6 @@ func (s *Server) handleSaveSender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update
 	sdr, err := s.Store.GetSenderByID(dto.ID)
 	if err != nil {
 		if err == store.ErrNotFound {
@@ -378,10 +460,7 @@ func (s *Server) handleSaveSender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// We don't auto-regen DKIM on update to allow manual management
-	// But we do return the status
 	d, _ := s.Store.GetDomainByID(sdr.DomainID)
-	
 	respDTO := senderToDTO(sdr)
 	if d != nil {
 		respDTO.HasDKIM = checkDKIMExists(d.Name, sdr.LocalPart)
@@ -406,10 +485,6 @@ func (s *Server) handleDeleteSenderByID(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
-
-// ----------------------
-// Helpers
-// ----------------------
 
 func domainToDTO(d *models.Domain, includeSenders bool) domainDTO {
 	dto := domainDTO{
@@ -436,7 +511,6 @@ func senderToDTO(sdr *models.Sender) senderDTO {
 		LocalPart: sdr.LocalPart,
 		Email:     sdr.Email,
 		IP:        sdr.IP,
-		// SMTPPassword omitted
 	}
 }
 
