@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/csv"
 	"io"
 	"net/http"
@@ -33,10 +34,17 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Helper to clean BOM and whitespace
+	cleanHeader := func(h string) string {
+		// Remove UTF-8 BOM if present
+		h = strings.TrimPrefix(h, "\ufeff")
+		return strings.ToLower(strings.TrimSpace(h))
+	}
+
 	// Map column indices
 	colMap := make(map[string]int)
 	for i, col := range header {
-		colMap[strings.ToLower(strings.TrimSpace(col))] = i
+		colMap[cleanHeader(col)] = i
 	}
 
 	// Required: domain
@@ -50,8 +58,8 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 	senderIdx := colMap["sender"]
 	localPartIdx := colMap["localpart"]
 	ipIdx := colMap["ip"]
-	passIdx := colMap["password"] // New: Password support
-	bounceIdx := colMap["bounce"] // New: Custom bounce user support
+	passIdx := colMap["password"] 
+	bounceIdx := colMap["bounce"] 
 
 	var stats struct {
 		DomainsCreated  int      `json:"domains_created"`
