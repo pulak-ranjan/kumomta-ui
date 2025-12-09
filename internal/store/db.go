@@ -27,7 +27,7 @@ func NewStore(path string) (*Store, error) {
 		&models.Sender{},
 		&models.AdminUser{},
 		&models.BounceAccount{},
-		&models.SystemIP{}, // <--- Added
+		&models.SystemIP{},
 	); err != nil {
 		return nil, err
 	}
@@ -244,10 +244,20 @@ func (s *Store) ListSystemIPs() ([]models.SystemIP, error) {
 	return list, err
 }
 
+// CreateSystemIP inserts a single IP (ignoring duplicates)
+// This is the function that was missing.
+func (s *Store) CreateSystemIP(ip *models.SystemIP) error {
+	return s.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(ip).Error
+}
+
+// CreateSystemIPs inserts multiple IPs (ignoring duplicates)
 func (s *Store) CreateSystemIPs(ips []models.SystemIP) error {
 	if len(ips) == 0 {
 		return nil
 	}
-	// OnConflict DoNothing ensures we don't crash if IP already exists
 	return s.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&ips).Error
+}
+
+func (s *Store) DeleteSystemIP(id uint) error {
+	return s.DB.Delete(&models.SystemIP{}, id).Error
 }
