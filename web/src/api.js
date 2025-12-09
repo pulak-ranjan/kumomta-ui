@@ -139,6 +139,23 @@ export function generateDKIM(domain, localPart) {
   });
 }
 
+export function importSenders(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  return fetch(`${API_BASE}/domains/import`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${getToken()}`
+    },
+    body: formData
+  }).then(async (res) => {
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Import failed");
+    return data;
+  });
+}
+
 // Bounce
 export function listBounces() {
   return apiRequest("/bounces");
