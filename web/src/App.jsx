@@ -1,97 +1,103 @@
-import React, { useState } from "react";
-import { AuthProvider, useAuth } from "./AuthContext";
-import Dashboard from "./pages/Dashboard";
-import Settings from "./pages/Settings";
-import Domains from "./pages/Domains";
-import ConfigPage from "./pages/ConfigPage";
-import DKIMPage from "./pages/DKIMPage";
-import BouncePage from "./pages/BouncePage";
-import LogsPage from "./pages/LogsPage";
-import IPsPage from "./pages/IPsPage"; // <--- Import
-import LoginRegister from "./pages/LoginRegister";
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
+import { ThemeProvider, ThemeToggleCompact } from './components/ThemeProvider';
 
-function AppShell() {
-  const { user, loading, logout } = useAuth();
-  const [tab, setTab] = useState("dashboard");
+// Pages
+import LoginPage from './pages/LoginPage';
+import DashboardPage from './pages/DashboardPage';
+import DomainsPage from './pages/DomainsPage';
+import SendersPage from './pages/SendersPage';
+import BouncePage from './pages/BouncePage';
+import IPsPage from './pages/IPsPage';
+import DKIMPage from './pages/DKIMPage';
+import SettingsPage from './pages/SettingsPage';
+import SystemPage from './pages/SystemPage';
+import ImportPage from './pages/ImportPage';
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-50">
-        <div className="text-lg">Loading...</div>
-      </div>
-    );
-  }
+// New pages
+import StatsPage from './pages/StatsPage';
+import QueuePage from './pages/QueuePage';
+import WebhooksPage from './pages/WebhooksPage';
+import DMARCPage from './pages/DMARCPage';
+import SecurityPage from './pages/SecurityPage';
 
-  if (!user) {
-    return <LoginRegister />;
-  }
+function ProtectedRoute({ children }) {
+  const token = localStorage.getItem('token');
+  if (!token) return <Navigate to="/login" replace />;
+  return children;
+}
 
-  const renderTab = () => {
-    switch (tab) {
-      case "dashboard":
-        return <Dashboard />;
-      case "settings":
-        return <Settings />;
-      case "ips":
-        return <IPsPage />; // <--- Route
-      case "domains":
-        return <Domains />;
-      case "config":
-        return <ConfigPage />;
-      case "dkim":
-        return <DKIMPage />;
-      case "bounce":
-        return <BouncePage />;
-      case "logs":
-        return <LogsPage />;
-      default:
-        return <Dashboard />;
-    }
+function Sidebar() {
+  const location = useLocation();
+  const isActive = (path) => location.pathname === path;
+
+  const links = [
+    { path: '/', icon: '📊', label: 'Dashboard' },
+    { path: '/stats', icon: '📈', label: 'Statistics' },
+    { path: '/domains', icon: '🌐', label: 'Domains' },
+    { path: '/dmarc', icon: '🛡️', label: 'DMARC' },
+    { path: '/dkim', icon: '🔑', label: 'DKIM' },
+    { path: '/bounce', icon: '📬', label: 'Bounce' },
+    { path: '/ips', icon: '🖥️', label: 'IPs' },
+    { path: '/queue', icon: '📤', label: 'Queue' },
+    { path: '/webhooks', icon: '🔔', label: 'Webhooks' },
+    { path: '/import', icon: '📥', label: 'Import' },
+    { path: '/system', icon: '⚙️', label: 'System' },
+    { path: '/security', icon: '🔐', label: 'Security' },
+    { path: '/settings', icon: '⚙️', label: 'Settings' },
+  ];
+
+  const logout = () => {
+    localStorage.removeItem('token');
+    window.location.href = '/login';
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col">
-      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="font-semibold tracking-wide">Kumo Control Panel</div>
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-slate-300">{user.email}</span>
-            <button
-              onClick={logout}
-              className="px-3 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-xs"
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-        <nav className="max-w-6xl mx-auto px-4 pb-2 flex gap-2 text-sm overflow-x-auto">
-          {[
-            ["dashboard", "Dashboard"],
-            ["settings", "Settings"],
-            ["ips", "IP Manager"], // <--- Nav Item
-            ["domains", "Domains & Senders"],
-            ["config", "Config"],
-            ["dkim", "DKIM"],
-            ["bounce", "Bounce"],
-            ["logs", "Logs"]
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`px-3 py-1 rounded-md whitespace-nowrap ${
-                tab === key
-                  ? "bg-sky-500 text-slate-50"
-                  : "bg-slate-800 text-slate-200 hover:bg-slate-700"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
-      </header>
+    <div className="w-64 bg-gray-800 dark:bg-gray-900 min-h-screen p-4 flex flex-col">
+      <div className="text-xl font-bold text-white mb-8 flex items-center gap-2">
+        <span className="text-2xl">📧</span> KumoMTA UI
+      </div>
+      
+      <nav className="flex-1 space-y-1">
+        {links.map(link => (
+          <Link
+            key={link.path}
+            to={link.path}
+            className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+              isActive(link.path)
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+            }`}
+          >
+            <span>{link.icon}</span>
+            <span>{link.label}</span>
+          </Link>
+        ))}
+      </nav>
 
-      <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-4">
-        {renderTab()}
+      <div className="border-t border-gray-700 pt-4 space-y-2">
+        <div className="flex justify-between items-center px-3">
+          <span className="text-gray-400 text-sm">Theme</span>
+          <ThemeToggleCompact />
+        </div>
+        <button
+          onClick={logout}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-red-400 hover:bg-gray-700 transition-colors"
+        >
+          <span>🚪</span>
+          <span>Logout</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Layout({ children }) {
+  return (
+    <div className="flex min-h-screen bg-gray-900 dark:bg-gray-950">
+      <Sidebar />
+      <main className="flex-1 overflow-auto">
+        {children}
       </main>
     </div>
   );
@@ -99,8 +105,98 @@ function AppShell() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppShell />
-    </AuthProvider>
+    <ThemeProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          
+          <Route path="/" element={
+            <ProtectedRoute>
+              <Layout><DashboardPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/stats" element={
+            <ProtectedRoute>
+              <Layout><StatsPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/domains" element={
+            <ProtectedRoute>
+              <Layout><DomainsPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/domains/:id/senders" element={
+            <ProtectedRoute>
+              <Layout><SendersPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/dmarc" element={
+            <ProtectedRoute>
+              <Layout><DMARCPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/dkim" element={
+            <ProtectedRoute>
+              <Layout><DKIMPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/bounce" element={
+            <ProtectedRoute>
+              <Layout><BouncePage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/ips" element={
+            <ProtectedRoute>
+              <Layout><IPsPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/queue" element={
+            <ProtectedRoute>
+              <Layout><QueuePage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/webhooks" element={
+            <ProtectedRoute>
+              <Layout><WebhooksPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/import" element={
+            <ProtectedRoute>
+              <Layout><ImportPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/system" element={
+            <ProtectedRoute>
+              <Layout><SystemPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/security" element={
+            <ProtectedRoute>
+              <Layout><SecurityPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/settings" element={
+            <ProtectedRoute>
+              <Layout><SettingsPage /></Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }
