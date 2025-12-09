@@ -6,6 +6,7 @@ export default function QueuePage() {
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState(100);
 
+  // FIX: Use correct token key
   const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -15,15 +16,17 @@ export default function QueuePage() {
     setLoading(true);
     try {
       const res = await fetch(`/api/queue?limit=${limit}`, { headers });
-      setMessages(await res.json() || []);
-    } catch (e) { console.error(e); }
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      const data = await res.json();
+      setMessages(Array.isArray(data) ? data : []);
+    } catch (e) { console.error(e); setMessages([]); }
     setLoading(false);
   };
 
   const fetchStats = async () => {
     try {
       const res = await fetch('/api/queue/stats', { headers });
-      setStats(await res.json());
+      if (res.ok) setStats(await res.json());
     } catch (e) { console.error(e); }
   };
 
