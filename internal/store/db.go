@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"log"
 	"time"
 
@@ -26,7 +27,7 @@ func NewStore(path string) (*Store, error) {
 		&models.Domain{},
 		&models.Sender{},
 		&models.AdminUser{},
-		&models.AuthSession{}, // <--- Added
+		&models.AuthSession{},
 		&models.BounceAccount{},
 		&models.SystemIP{},
 	); err != nil {
