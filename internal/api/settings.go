@@ -39,7 +39,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/settings
-func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 	var dto settingsDTO
 	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
