@@ -80,9 +80,11 @@ type Sender struct {
 	IP           string `json:"ip"` // specific IP for this sender
 	SMTPPassword string `json:"smtp_password,omitempty"`
 	
-	// Virtual fields for UI convenience (populated manually if needed)
-	HasDKIM        bool   `gorm:"-" json:"has_dkim"`
-	BounceUsername string `gorm:"-" json:"bounce_username"`
+	// FIX: BounceUsername is now a real column (removed gorm:"-")
+	BounceUsername string `json:"bounce_username"`
+
+	// Virtual field for DKIM check (computed at runtime)
+	HasDKIM bool `gorm:"-" json:"has_dkim"` 
 }
 
 // Inventory of IPs available on the server
