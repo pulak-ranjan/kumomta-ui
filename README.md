@@ -1,289 +1,142 @@
 # KumoMTA UI
 
-A modern, production-grade control panel for managing KumoMTA, domains, senders, DKIM keys, relay IPs, bounce accounts, and configuration files — with a clean React frontend and a robust Go backend.
+![Version](https://img.shields.io/badge/version-2.1.0-blue.svg) ![License](https://img.shields.io/badge/license-Apache%202.0-green.svg) ![Status](https://img.shields.io/badge/status-production--ready-purple.svg)
 
-**Project by:** Pulak Ranjan  
-**Developed with the help of:** ChatGPT and Gemini
-
----
-
-## ✨ Features
-
-### 🔧 Backend (Go)
-
-- Fully modular backend written in Go 1.22
-- Secure admin authentication (JWT)
-- Full CRUD:
-  - Domains
-  - Senders (local parts, SMTP IPs, SMTP password write-only)
-  - Bounce mailboxes (bcrypt hashed passwords)
-- System bounce account provisioning (Linux user creation, Maildir setup)
-- App settings (hostname, server IP, relay IPs, AI provider keys)
-- Automatic DKIM RSA key generation (2048-bit)
-- DNS record exporter for DKIM + A + MX + SPF
-- Config generator for:
-  - `sources.toml`
-  - `queues.toml`
-  - `listener_domains.toml`
-  - `dkim_data.toml`
-  - `init.lua`
-- Config apply (validate + restart KumoMTA)
-- System-level log access:
-  - journalctl for KumoMTA
-  - journalctl for Dovecot
-  - journalctl for Fail2Ban
-- Local or Docker builds supported
-- Environment-based DB path (`DB_DIR`)
-
-### 🎨 Frontend (React + Tailwind)
-
-- Clean dashboard UI
-- First-time setup screen (admin creation)
-- Real-time DNS helpers for each domain
-- DKIM generator UI with:
-  - Copy Name
-  - Copy Value
-  - Copy Full TXT
-- Domain and sender management
-- Bounce management UI
-- Log viewers for Kumo, Dovecot, Fail2Ban
-- Status API viewer
-- Auto-detected Panel URL + API URL
+A modern, mobile-responsive control panel for KumoMTA. Manage domains, monitor queues, rotate IPs, and secure your infrastructure with a beautiful React frontend and a robust Go backend.
 
 ---
 
-## 🛠️ Requirements
+## ✨ Key Features
 
-### Server
+### 🎨 Modern UI (v2.1)
+- **Responsive Design:** Fully mobile-friendly layout with collapsible sidebars.
+- **Theming:** Seamless Dark/Light mode switching (system sync).
+- **Visuals:** Professional styling with Lucide icons and glass-morphism effects.
+- **Terminal Viewer:** Real-time log streaming with a code-editor feel.
 
-- Rocky Linux 9 (recommended)
-- nginx (optional for proxy + HTTPS)
-- certbot (optional for Let's Encrypt SSL)
-- firewalld
-- systemd
-- KumoMTA installed at `/opt/kumomta`
+### 🛡️ Advanced Security
+- **Two-Factor Authentication (2FA):** TOTP support (Google Authenticator/Authy).
+- **Security Audits:** Automated scans for file permissions and exposed ports.
+- **Blacklist Monitoring:** Hourly checks against Spamhaus and Barracuda RBLs.
+- **Audit Logging:** Tracks every administrative action (Create/Update/Delete).
 
-### Client
+### ⚙️ Core Management
+- **Domain & Sender CRUD:** Manage identities with DKIM auto-generation.
+- **IP Inventory:** Track and rotate server IPs easily.
+- **Queue Management:** Flush queues, delete messages, and view granular status.
+- **Config Generator:** Auto-generate `init.lua`, `sources.toml`, and more.
 
-- Any modern browser
-- HTTPS recommended
+### 🔔 Automation & Alerts
+- **Webhooks:** Native integration with **Slack** and **Discord**.
+- **Daily Reports:** Automated traffic summaries sent every 24 hours.
+- **Bounce Alerts:** Real-time notifications when bounce rates exceed thresholds.
 
 ---
 
-## 🚀 Installation Guide (Production – Rocky Linux 9)
+## 🛠️ Prerequisites
 
-You will find an auto-installer in:
+Before installing, ensure your server meets these requirements:
 
-```
-scripts/install-kumomta-ui-rocky9.sh
-```
+- **OS:** Rocky Linux 9 (Recommended) or AlmaLinux 9.
+- **Access:** Root (`sudo -i`) privileges.
+- **KumoMTA:** Must be installed (`/opt/kumomta`).
+- **Dependencies:**
+  - `git`
+  - `curl`
+  - `nginx` (for reverse proxy)
+  - `certbot` (for SSL)
 
-### 1. Clone the repository
+---
+
+## 🚀 Installation Guide
+
+### Option A: Auto-Installer (Recommended)
+
+This script installs Go, Node.js, Nginx, SSL (Certbot), and sets up the systemd service automatically.
 
 ```bash
+# 1. Update your system
+sudo dnf update -y
+
+# 2. Install Git
+sudo dnf install -y git
+
+# 3. Clone the repository
 sudo mkdir -p /opt/kumomta-ui
 sudo git clone https://github.com/pulak-ranjan/kumomta-ui.git /opt/kumomta-ui
 cd /opt/kumomta-ui
-```
 
-### 2. Run the installer
-
-```bash
+# 4. Run the installer
 sudo bash scripts/install-kumomta-ui-rocky9.sh
 ```
 
-During installation, it will ask:
+### Option B: Manual Build (Step-by-Step)
 
-- System hostname (optional)
-- Panel domain for HTTPS (optional)
-- Email for Let's Encrypt (required if domain provided)
+If you prefer to configure the environment yourself or are developing locally:
 
-**If domain is provided:**
-- Nginx reverse proxy is created automatically
-- Let's Encrypt SSL is issued via certbot
-- Firewall ports 80 and 443 opened
-
-**If no domain is provided:**
-- Panel is available at `http://SERVER-IP:9000`
-- Firewall port 9000 opened
-
-The installer prints your final access URL, e.g.:
-
-```
-Panel URL: https://mta.example.com/
-API URL:   https://mta.example.com/api
-```
-
----
-
-## 🔧 Development Build Instructions
-
-### Backend (Go)
+#### 1. Backend Setup
 
 ```bash
+# Install Go
+sudo dnf install -y golang
+
+# Create DB Directory
+export DB_DIR=/var/lib/kumomta-ui
+sudo mkdir -p $DB_DIR
+sudo chmod 700 $DB_DIR
+
+# Build Binary
+cd /opt/kumomta-ui
 go mod tidy
-go run ./cmd/server
-```
-
-Local DB:
-
-```bash
-export DB_DIR=./data
-go run ./cmd/server
-```
-
-Build binary:
-
-```bash
 go build -o kumomta-ui-server ./cmd/server
 ```
 
-### Frontend (React)
-
-Install dependencies:
+#### 2. Frontend Setup
 
 ```bash
+# Install Node.js 20
+sudo dnf module install -y nodejs:20
+
+# Build Static Files
 cd web
 npm install
-```
-
-Run in dev mode:
-
-```bash
-npm run dev
-```
-
-Build static production files:
-
-```bash
 npm run build
+# The build will be in ./dist
 ```
 
-Files appear in:
+#### 3. Run Service
 
-```
-web/dist/
-```
-
-These will be served by Nginx or any static file hosting method you prefer. In production, the backend serves only API; Nginx proxies frontend → backend.
-
----
-
-## 🔐 Security Features
-
-- Admin password hashed using bcrypt
-- Bounce mailbox passwords hashed
-- SMTP password for senders is write-only (never returned to client)
-- AI API keys stored encrypted or not returned in API
-- Backend listens on local port when HTTPS domain is configured
-- Nginx terminates TLS with automatic renewals
-
----
-
-## 📡 API Structure (Quick Overview)
-
-### Auth
-
-```
-POST /api/auth/register
-POST /api/auth/login
-GET  /api/auth/me
-```
-
-### Settings
-
-```
-GET  /api/settings
-POST /api/settings
-```
-
-### Domains & Senders
-
-```
-GET    /api/domains
-POST   /api/domains
-GET    /api/domains/{id}
-DELETE /api/domains/{id}
-
-GET    /api/domains/{id}/senders
-POST   /api/domains/{id}/senders
-DELETE /api/senders/{id}
-```
-
-### DKIM
-
-```
-POST /api/dkim/generate
-GET  /api/dkim/records
-```
-
-### Bounce
-
-```
-GET    /api/bounces
-POST   /api/bounces
-DELETE /api/bounces/{id}
-POST   /api/bounces/apply
-```
-
-### Logs / Status
-
-```
-GET /api/status
-GET /api/logs/kumomta
-GET /api/logs/dovecot
-GET /api/logs/fail2ban
-```
-
-### Config
-
-```
-GET  /api/config/preview
-POST /api/config/apply
+```bash
+# Set DB path and run
+export DB_DIR=/var/lib/kumomta-ui
+./kumomta-ui-server
 ```
 
 ---
 
-## 📦 Build Versioning
+## 🔒 Security Best Practices
 
-Follow this structure:
+1. **Enable 2FA:** Immediately after logging in, go to the Security page and setup Two-Factor Authentication.
 
-```
-v1.0.0  – First production-ready release
-v1.1.0  – DKIM improvements, UI enhancements
-v1.2.0  – Auto HTTPS installer, bounce hashing
-v1.3.0  – AI assistant integration (future)
-```
+2. **Configure Webhooks:** Go to Webhooks and add a Discord/Slack URL to receive security alerts.
 
-Semantic Versioning:
+3. **Run Audit:** Click "Run Security Audit" on the Webhooks page to verify file permissions.
 
-```
-MAJOR.MINOR.PATCH
-```
+4. **Firewall:** Ensure port 9000 is NOT exposed to the public internet. Use Nginx as a reverse proxy (handled by the installer).
 
 ---
 
-## ✍️ Credits
+## 🤝 Contributing
 
-This project was created by:
+We welcome contributions! Please see CONTRIBUTING.md for details.
 
-**Pulak Ranjan**
-
-with development assistance from:
-
-- **ChatGPT** (OpenAI)
-- **Gemini** (Google)
-
----
-
-## ❤️ Contribution
-
-PRs are welcome!
-
-Open issues if you want new features or need improvements.
+1. Fork the repo.
+2. Create a feature branch (`git checkout -b feature/amazing-feature`).
+3. Commit your changes.
+4. Open a Pull Request.
 
 ---
 
 ## 📜 License
 
-[Apache License 2.0](LICENSE)
+Distributed under the Apache 2.0 License. See [LICENSE](https://github.com/pulak-ranjan/kumomta-ui/blob/main/LICENSE) for more information.
