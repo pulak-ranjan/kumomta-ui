@@ -1,5 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import QRCode from 'qrcode';
+import { 
+  Shield, 
+  Smartphone, 
+  Monitor, 
+  LogOut, 
+  Key, 
+  CheckCircle2, 
+  AlertOctagon,
+  ScanLine
+} from 'lucide-react';
+import { useAuth } from "../AuthContext"; // Need to fetch user from context or api
+import { cn } from "../lib/utils";
 
 export default function SecurityPage() {
   const [user, setUser] = useState(null);
@@ -13,7 +25,6 @@ export default function SecurityPage() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // FIX: Use correct token key
   const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -36,7 +47,7 @@ export default function SecurityPage() {
 
   const startSetup2FA = async (e) => {
     e.preventDefault();
-    if (!password) { setMessage('❌ Enter your password'); return; }
+    if (!password) { setMessage('Enter your password'); return; }
     setLoading(true);
     try {
       const res = await fetch('/api/auth/setup-2fa', { method: 'POST', headers, body: JSON.stringify({ password }) });
@@ -46,141 +57,179 @@ export default function SecurityPage() {
         const qr = await QRCode.toDataURL(data.uri);
         setQrDataUrl(qr);
         setPassword('');
+        setMessage('');
       } else {
         const err = await res.json();
-        setMessage('❌ ' + (err.error || 'Failed'));
+        setMessage(err.error || 'Failed');
       }
-    } catch (e) { setMessage('❌ Error: ' + e.message); }
+    } catch (e) { setMessage('Error: ' + e.message); }
     setLoading(false);
   };
 
   const enable2FA = async (e) => {
     e.preventDefault();
-    if (!code || code.length !== 6) { setMessage('❌ Enter 6-digit code'); return; }
+    if (!code || code.length !== 6) { setMessage('Enter 6-digit code'); return; }
     setLoading(true);
     try {
       const res = await fetch('/api/auth/enable-2fa', { method: 'POST', headers, body: JSON.stringify({ code }) });
       if (res.ok) {
-        setMessage('✅ 2FA enabled!');
+        setMessage('2FA enabled successfully!');
         setSetup2FA(null);
         setCode('');
         fetchUser();
       } else {
         const err = await res.json();
-        setMessage('❌ ' + (err.error || 'Invalid code'));
+        setMessage(err.error || 'Invalid code');
       }
-    } catch (e) { setMessage('❌ Error: ' + e.message); }
+    } catch (e) { setMessage('Error: ' + e.message); }
     setLoading(false);
   };
 
   const disable2FA = async (e) => {
     e.preventDefault();
-    if (!disablePassword || !disableCode) { setMessage('❌ Enter password and code'); return; }
+    if (!disablePassword || !disableCode) { setMessage('Enter password and code'); return; }
     setLoading(true);
     try {
       const res = await fetch('/api/auth/disable-2fa', { method: 'POST', headers, body: JSON.stringify({ password: disablePassword, code: disableCode }) });
       if (res.ok) {
-        setMessage('✅ 2FA disabled');
+        setMessage('2FA disabled');
         setDisablePassword('');
         setDisableCode('');
         fetchUser();
       } else {
         const err = await res.json();
-        setMessage('❌ ' + (err.error || 'Failed'));
+        setMessage(err.error || 'Failed');
       }
-    } catch (e) { setMessage('❌ Error: ' + e.message); }
+    } catch (e) { setMessage('Error: ' + e.message); }
     setLoading(false);
   };
 
   const formatDate = (d) => d ? new Date(d).toLocaleString() : '-';
-  const parseUA = (ua) => {
-    if (!ua) return 'Unknown';
-    if (ua.includes('Mobile')) return '📱 Mobile';
-    if (ua.includes('Chrome')) return '🖥️ Chrome';
-    if (ua.includes('Firefox')) return '🖥️ Firefox';
-    if (ua.includes('Safari')) return '🖥️ Safari';
-    return '🖥️ Browser';
+  const getDeviceIcon = (ua) => {
+    if (!ua) return Monitor;
+    if (ua.includes('Mobile')) return Smartphone;
+    return Monitor;
   };
 
   return (
-    <div className="p-6 bg-gray-900 min-h-screen text-white">
-      <h1 className="text-2xl font-bold mb-6">🔐 Security Settings</h1>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Security</h1>
+        <p className="text-muted-foreground">Manage your account security and active sessions.</p>
+      </div>
 
-      {message && <div className="mb-4 p-3 bg-gray-800 rounded">{message}</div>}
+      {message && (
+        <div className={cn("p-4 rounded-md text-sm font-medium", message.includes("enabled") ? "bg-green-500/10 text-green-600" : "bg-destructive/10 text-destructive")}>
+          {message}
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-gray-800 p-6 rounded-lg">
-          <h2 className="text-lg font-semibold mb-4">Two-Factor Authentication</h2>
+      <div className="grid lg:grid-cols-2 gap-6">
+        
+        {/* 2FA Card */}
+        <div className="bg-card border rounded-xl p-6 shadow-sm h-fit">
+          <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
+            <Shield className="w-5 h-5 text-primary" /> Two-Factor Authentication
+          </h3>
           
           {user?.has_2fa ? (
-            <div>
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-green-400 text-2xl">✅</span>
-                <span>2FA is enabled</span>
+            <div className="space-y-6">
+              <div className="flex items-center gap-3 p-4 bg-green-500/10 border border-green-500/20 rounded-lg text-green-700 dark:text-green-400">
+                <CheckCircle2 className="w-6 h-6" />
+                <div>
+                  <div className="font-semibold">2FA is active</div>
+                  <div className="text-xs opacity-90">Your account is secured with TOTP.</div>
+                </div>
               </div>
-              <form onSubmit={disable2FA} className="space-y-4">
-                <p className="text-gray-400 text-sm">To disable 2FA, enter your password and current code:</p>
-                <input type="password" value={disablePassword} onChange={e => setDisablePassword(e.target.value)}
-                  placeholder="Password" className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2" />
-                <input type="text" value={disableCode} onChange={e => setDisableCode(e.target.value)}
-                  placeholder="6-digit code" maxLength={6} className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2" />
-                <button type="submit" disabled={loading} className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded disabled:opacity-50">
-                  Disable 2FA
-                </button>
-              </form>
+
+              <div className="pt-4 border-t">
+                <h4 className="text-sm font-medium mb-4">Disable 2FA</h4>
+                <form onSubmit={disable2FA} className="space-y-3">
+                  <input type="password" value={disablePassword} onChange={e => setDisablePassword(e.target.value)}
+                    placeholder="Current Password" className="w-full h-10 rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-ring" />
+                  <input type="text" value={disableCode} onChange={e => setDisableCode(e.target.value)}
+                    placeholder="6-Digit Authenticator Code" maxLength={6} className="w-full h-10 rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-ring" />
+                  <button type="submit" disabled={loading} className="w-full h-10 bg-destructive text-destructive-foreground rounded-md text-sm font-medium hover:bg-destructive/90 transition-colors">
+                    Disable 2FA
+                  </button>
+                </form>
+              </div>
             </div>
           ) : setup2FA ? (
-            <div className="space-y-4">
-              <p className="text-gray-400">Scan this QR code with your authenticator app:</p>
-              {qrDataUrl && <img src={qrDataUrl} alt="QR Code" className="mx-auto bg-white p-2 rounded" />}
-              <div className="bg-gray-700 p-3 rounded">
-                <p className="text-xs text-gray-400 mb-1">Or enter manually:</p>
-                <code className="text-sm break-all">{setup2FA.secret}</code>
+            <div className="space-y-6 animate-in fade-in">
+              <div className="text-center space-y-4">
+                <div className="bg-white p-4 rounded-xl inline-block shadow-sm">
+                  {qrDataUrl && <img src={qrDataUrl} alt="QR Code" className="w-48 h-48" />}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  <p>Scan this QR code with your authenticator app.</p>
+                  <p className="mt-2 text-xs font-mono bg-muted p-2 rounded select-all">{setup2FA.secret}</p>
+                </div>
               </div>
-              <form onSubmit={enable2FA} className="space-y-4">
+
+              <form onSubmit={enable2FA} className="space-y-3">
                 <input type="text" value={code} onChange={e => setCode(e.target.value)}
                   placeholder="Enter 6-digit code" maxLength={6}
-                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-center text-2xl tracking-widest" />
-                <button type="submit" disabled={loading} className="w-full bg-green-600 hover:bg-green-700 px-4 py-2 rounded disabled:opacity-50">
+                  className="w-full h-12 text-center text-xl tracking-[0.5em] font-mono rounded-md border bg-background px-3 focus:ring-2 focus:ring-ring" />
+                <button type="submit" disabled={loading} className="w-full h-10 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors">
                   {loading ? 'Verifying...' : 'Verify & Enable'}
                 </button>
               </form>
             </div>
           ) : (
-            <form onSubmit={startSetup2FA} className="space-y-4">
-              <p className="text-gray-400">Add an extra layer of security with TOTP-based 2FA.</p>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                placeholder="Enter your password to begin" className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2" />
-              <button type="submit" disabled={loading} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded disabled:opacity-50">
-                {loading ? 'Loading...' : '🔑 Setup 2FA'}
-              </button>
-            </form>
+            <div className="space-y-4">
+              <div className="p-4 bg-muted/50 rounded-lg text-sm text-muted-foreground">
+                Protect your admin account by requiring a code from your phone when logging in.
+              </div>
+              <form onSubmit={startSetup2FA} className="space-y-3">
+                <div className="relative">
+                  <Key className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                    placeholder="Enter password to start setup" className="w-full pl-9 h-10 rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-ring" />
+                </div>
+                <button type="submit" disabled={loading} className="w-full h-10 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-2">
+                  <ScanLine className="w-4 h-4" /> Setup 2FA
+                </button>
+              </form>
+            </div>
           )}
         </div>
 
-        <div className="bg-gray-800 p-6 rounded-lg">
-          <h2 className="text-lg font-semibold mb-4">Active Sessions</h2>
-          <p className="text-gray-400 text-sm mb-4">You can be logged in on up to 3 devices. Oldest sessions are removed automatically.</p>
-          <div className="space-y-3">
-            {sessions.map((sess, i) => (
-              <div key={i} className="bg-gray-700 p-3 rounded flex justify-between items-center">
-                <div>
-                  <div className="font-semibold">{parseUA(sess.user_agent)}</div>
-                  <div className="text-sm text-gray-400">{sess.device_ip}</div>
-                  <div className="text-xs text-gray-500">Active since {formatDate(sess.created_at)}</div>
+        {/* Sessions Card */}
+        <div className="bg-card border rounded-xl p-6 shadow-sm h-fit">
+          <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
+            <Monitor className="w-5 h-5 text-blue-500" /> Active Sessions
+          </h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            You are logged in on these devices. The system automatically rotates old sessions.
+          </p>
+          
+          <div className="space-y-1">
+            {sessions.map((sess, i) => {
+              const Icon = getDeviceIcon(sess.user_agent);
+              return (
+                <div key={i} className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors border border-transparent hover:border-border">
+                  <div className="p-2 bg-secondary rounded-full">
+                    <Icon className="w-4 h-4 text-secondary-foreground" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">
+                        {sess.user_agent ? sess.user_agent.split('/')[0] : 'Unknown Device'}
+                      </span>
+                      {i === 0 && <span className="bg-green-500/10 text-green-600 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">Current</span>}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5 font-mono">
+                      IP: {sess.device_ip}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/70 mt-1">
+                      Started: {formatDate(sess.created_at)}
+                    </div>
+                  </div>
                 </div>
-                {i === 0 && <span className="text-green-400 text-xs">Current</span>}
-              </div>
-            ))}
+              );
+            })}
           </div>
-        </div>
-      </div>
-
-      <div className="mt-6 bg-gray-800 p-6 rounded-lg">
-        <h2 className="text-lg font-semibold mb-4">Account Info</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <div><span className="text-gray-400">Email:</span> {user?.email}</div>
-          <div><span className="text-gray-400">2FA:</span> {user?.has_2fa ? '✅ Enabled' : '❌ Disabled'}</div>
         </div>
       </div>
     </div>
