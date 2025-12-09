@@ -1,5 +1,16 @@
 import React, { useEffect, useState } from "react";
+import { 
+  Globe, 
+  Mail, 
+  Cpu, 
+  MemoryStick, 
+  Server, 
+  Activity, 
+  ShieldAlert, 
+  Sparkles 
+} from "lucide-react";
 import { getDashboardStats, getAIInsights } from "../api";
+import { cn } from "../lib/utils";
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
@@ -23,7 +34,7 @@ export default function Dashboard() {
     setInsight("");
     try {
       const res = await getAIInsights();
-      setInsight(res.insight);
+      setInsight(res.analysis || res.insight);
     } catch (err) {
       setInsight("Error: " + err.message);
     } finally {
@@ -31,87 +42,112 @@ export default function Dashboard() {
     }
   };
 
-  if (!stats) return <div className="p-4 text-slate-400">Loading dashboard...</div>;
+  if (!stats) return <div className="p-8 text-muted-foreground flex justify-center">Loading dashboard...</div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold">System Dashboard</h2>
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+          <p className="text-muted-foreground">Overview of your email infrastructure.</p>
+        </div>
         <button 
           onClick={getAI}
           disabled={loading}
-          className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-2 transition-colors"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors shadow-sm"
         >
-          {loading ? "Analyzing Logs..." : "✨ AI Log Analysis"}
+          {loading ? <Sparkles className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+          {loading ? "Analyzing..." : "AI Log Analysis"}
         </button>
       </div>
 
-      {/* AI Insight Box */}
       {insight && (
-        <div className="bg-slate-900/80 border border-purple-500/30 p-4 rounded-lg text-sm text-slate-300 whitespace-pre-wrap shadow-lg shadow-purple-900/10">
-          <div className="text-purple-400 font-semibold mb-2 text-xs uppercase tracking-wider">AI Analysis Result</div>
-          {insight}
+        <div className="bg-card border border-primary/20 p-6 rounded-xl shadow-sm relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-1 h-full bg-primary" />
+          <h3 className="font-semibold text-primary mb-2 flex items-center gap-2">
+            <Sparkles className="w-4 h-4" /> AI Insight
+          </h3>
+          <div className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
+            {insight}
+          </div>
         </div>
       )}
 
       {/* Main Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Domains" value={stats.domains} icon="🌐" />
-        <StatCard label="Senders" value={stats.senders} icon="📧" />
-        <StatCard label="CPU Load" value={stats.cpu_load} color="text-sky-400" />
-        <StatCard label="RAM Usage" value={stats.ram_usage} color="text-sky-400" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="Total Domains" value={stats.domains} icon={Globe} color="text-blue-500" />
+        <StatCard label="Active Senders" value={stats.senders} icon={Mail} color="text-emerald-500" />
+        <StatCard label="CPU Load" value={stats.cpu_load} icon={Cpu} color="text-orange-500" />
+        <StatCard label="RAM Usage" value={stats.ram_usage} icon={MemoryStick} color="text-purple-500" />
       </div>
 
-      {/* Infrastructure Health */}
-      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mt-6 mb-3">Service Status</h3>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ServiceCard name="KumoMTA" status={stats.kumo_status} />
-        <ServiceCard name="Dovecot" status={stats.dovecot_status} />
-        <ServiceCard name="Fail2Ban" status={stats.f2b_status} />
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Infrastructure Health */}
+        <div className="bg-card border rounded-xl p-6 shadow-sm">
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Activity className="w-5 h-5 text-muted-foreground" />
+            Service Status
+          </h3>
+          <div className="space-y-4">
+            <ServiceRow name="KumoMTA" status={stats.kumo_status} />
+            <ServiceRow name="Dovecot" status={stats.dovecot_status} />
+            <ServiceRow name="Fail2Ban" status={stats.f2b_status} />
+          </div>
+        </div>
 
-      {/* Open Ports */}
-      <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 mt-4">
-        <div className="text-xs uppercase text-slate-500 mb-2">Open Ports (Public/Local)</div>
-        <div className="flex flex-wrap gap-2">
-          {stats.open_ports ? (
-            stats.open_ports.split(", ").map(port => (
-              <span key={port} className="bg-slate-950 border border-slate-700 text-slate-300 px-2 py-1 rounded text-xs font-mono">
-                {port}
-              </span>
-            ))
-          ) : (
-            <span className="text-slate-600 text-xs">Scanning...</span>
-          )}
+        {/* Open Ports */}
+        <div className="bg-card border rounded-xl p-6 shadow-sm">
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Server className="w-5 h-5 text-muted-foreground" />
+            Open Ports
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {stats.open_ports ? (
+              stats.open_ports.split(", ").map(port => (
+                <span key={port} className="bg-secondary text-secondary-foreground px-3 py-1.5 rounded-md text-sm font-mono border">
+                  {port}
+                </span>
+              ))
+            ) : (
+              <span className="text-muted-foreground text-sm">Scanning...</span>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function StatCard({ label, value, color = "text-white", icon }) {
+function StatCard({ label, value, icon: Icon, color }) {
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 relative overflow-hidden">
-      <div className="relative z-10">
-        <div className="text-xs uppercase text-slate-500 mb-1">{label}</div>
-        <div className={`text-2xl font-mono ${color}`}>{value}</div>
+    <div className="bg-card border rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex justify-between items-start">
+        <div>
+          <p className="text-sm font-medium text-muted-foreground">{label}</p>
+          <h4 className="text-2xl font-bold mt-2">{value}</h4>
+        </div>
+        <div className={cn("p-2 rounded-lg bg-secondary", color)}>
+          <Icon className="w-5 h-5" />
+        </div>
       </div>
-      {icon && <div className="absolute -right-2 -bottom-2 text-4xl opacity-10 grayscale">{icon}</div>}
     </div>
   );
 }
 
-function ServiceCard({ name, status }) {
+function ServiceRow({ name, status }) {
   const isActive = status === "active";
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex items-center justify-between">
-      <div>
-        <div className="text-xs uppercase text-slate-500 mb-1">{name}</div>
-        <div className={`text-lg font-medium ${isActive ? "text-green-400" : "text-red-400"}`}>
+    <div className="flex items-center justify-between p-3 rounded-lg border bg-background/50">
+      <span className="font-medium">{name}</span>
+      <div className="flex items-center gap-2">
+        <span className={cn(
+          "text-xs font-medium px-2 py-1 rounded-full capitalize",
+          isActive ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"
+        )}>
           {status || "Unknown"}
-        </div>
+        </span>
+        <div className={cn("w-2 h-2 rounded-full", isActive ? "bg-green-500 animate-pulse" : "bg-red-500")} />
       </div>
-      <div className={`w-3 h-3 rounded-full ${isActive ? "bg-green-500 animate-pulse" : "bg-red-500"}`}></div>
     </div>
   );
 }
