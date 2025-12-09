@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 )
@@ -14,20 +15,19 @@ type Store struct {
 	DB *gorm.DB
 }
 
-// NewStore opens/creates the SQLite DB and runs migrations.
 func NewStore(path string) (*Store, error) {
 	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
 	if err != nil {
 		return nil, err
 	}
 
-	// Auto-migrate all models (add new ones here when needed)
 	if err := db.AutoMigrate(
 		&models.AppSettings{},
 		&models.Domain{},
 		&models.Sender{},
 		&models.AdminUser{},
 		&models.BounceAccount{},
+		&models.SystemIP{}, // <--- Added
 	); err != nil {
 		return nil, err
 	}
@@ -59,7 +59,6 @@ func (s *Store) GetSettings() (*models.AppSettings, error) {
 	return &st, nil
 }
 
-// UpsertSettings will create if no row exists, otherwise update.
 func (s *Store) UpsertSettings(st *models.AppSettings) error {
 	if st.ID == 0 {
 		return s.DB.Create(st).Error
@@ -113,6 +112,12 @@ func (s *Store) DeleteDomain(id uint) error {
 	return s.DB.Delete(&models.Domain{}, id).Error
 }
 
+func (s *Store) CountDomains() (int64, error) {
+	var c int64
+	err := s.DB.Model(&models.Domain{}).Count(&c).Error
+	return c, err
+}
+
 // ----------------------
 // Senders
 // ----------------------
@@ -145,6 +150,12 @@ func (s *Store) UpdateSender(snd *models.Sender) error {
 
 func (s *Store) DeleteSender(id uint) error {
 	return s.DB.Delete(&models.Sender{}, id).Error
+}
+
+func (s *Store) CountSenders() (int64, error) {
+	var c int64
+	err := s.DB.Model(&models.Sender{}).Count(&c).Error
+	return c, err
 }
 
 // ----------------------
@@ -221,4 +232,22 @@ func (s *Store) UpdateBounceAccount(b *models.BounceAccount) error {
 
 func (s *Store) DeleteBounceAccount(id uint) error {
 	return s.DB.Delete(&models.BounceAccount{}, id).Error
+}
+
+// ----------------------
+// System IPs
+// ----------------------
+
+func (s *Store) ListSystemIPs() ([]models.SystemIP, error) {
+	var list []models.SystemIP
+	err := s.DB.Find(&list).Error
+	return list, err
+}
+
+func (s *Store) CreateSystemIPs(ips []models.SystemIP) error {
+	if len(ips) == 0 {
+		return nil
+	}
+	// OnConflict DoNothing ensures we don't crash if IP already exists
+	return s.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&ips).Error
 }
