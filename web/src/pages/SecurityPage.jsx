@@ -13,6 +13,7 @@ export default function SecurityPage() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // FIX: Use correct token key
   const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -21,6 +22,7 @@ export default function SecurityPage() {
   const fetchUser = async () => {
     try {
       const res = await fetch('/api/auth/me', { headers });
+      if (res.status === 401) { window.location.href = '/login'; return; }
       setUser(await res.json());
     } catch (e) { console.error(e); }
   };
@@ -28,7 +30,7 @@ export default function SecurityPage() {
   const fetchSessions = async () => {
     try {
       const res = await fetch('/api/auth/sessions', { headers });
-      setSessions(await res.json() || []);
+      if (res.ok) setSessions(await res.json() || []);
     } catch (e) { console.error(e); }
   };
 
