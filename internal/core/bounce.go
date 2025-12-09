@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 )
@@ -18,11 +19,19 @@ func EnsureBounceAccount(acc models.BounceAccount, plainPassword string) error {
 		return fmt.Errorf("username is required")
 	}
 
+	// FIX: Validate username format to prevent shell injection
+	// Only allow lowercase alphanumeric, underscores, and hyphens.
+	validUsername := regexp.MustCompile(`^[a-z0-9_-]+$`)
+	if !validUsername.MatchString(acc.Username) {
+		return fmt.Errorf("invalid username format: must be [a-z0-9_-]")
+	}
+
 	// Check if user exists: id -u username
 	checkCmd := exec.Command("id", "-u", acc.Username)
 	if err := checkCmd.Run(); err != nil {
 		// User does not exist, create it
-		useradd := exec.Command("useradd", "-m", "-s", "/sbin/nologin", acc.Username)
+		// Safe to pass acc.Username because of regex check above
+		useradd := exec.Command("useradd", "-m", "-s", "/usr/sbin/nologin", acc.Username)
 		if out, err := useradd.CombinedOutput(); err != nil {
 			return fmt.Errorf("useradd failed: %v, output: %s", err, string(out))
 		}
@@ -52,6 +61,7 @@ func EnsureBounceAccount(acc models.BounceAccount, plainPassword string) error {
 	}
 
 	// chown -R username:username /home/username/Maildir
+	// Use explicit user:group string format
 	chown := exec.Command("chown", "-R", fmt.Sprintf("%s:%s", acc.Username, acc.Username), maildir)
 	if out, err := chown.CombinedOutput(); err != nil {
 		return fmt.Errorf("chown Maildir failed: %v, output: %s", err, string(out))
