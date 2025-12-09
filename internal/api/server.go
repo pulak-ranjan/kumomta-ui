@@ -15,30 +15,24 @@ import (
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
 
-// context key for admin user
 type ctxKeyAdmin struct{}
 
-// Server wraps dependencies for HTTP handlers.
 type Server struct {
 	Store *store.Store
 }
 
-// NewServer creates a new API server instance.
 func NewServer(st *store.Store) *Server {
 	return &Server{Store: st}
 }
 
-// Router builds the chi router with all routes and middleware.
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 
-	// Global middlewares
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(securityHeaders)
 
-	// Public routes (no auth)
 	r.Get("/api/status", s.handleStatus)
 
 	r.Route("/api/auth", func(r chi.Router) {
@@ -46,17 +40,16 @@ func (s *Server) Router() http.Handler {
 		r.Post("/login", s.handleLogin)
 	})
 
-	// Protected routes (auth required)
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 
 		r.Get("/api/auth/me", s.handleMe)
 
-		// System (IPs) - NEW
+		// System (IPs)
 		r.Get("/api/system/ips", s.handleGetSystemIPs)
 		r.Post("/api/system/ips", s.handleAddIPs)
 
-		// Dashboard Stats & AI - NEW
+		// Dashboard
 		r.Get("/api/dashboard/stats", s.handleGetDashboardStats)
 		r.Post("/api/dashboard/ai", s.handleAIInsights)
 
@@ -64,7 +57,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/settings", s.handleGetSettings)
 		r.Post("/api/settings", s.handleSaveSettings)
 
-		// Config preview and apply
+		// Config
 		r.Get("/api/config/preview", s.handlePreviewConfig)
 		r.Post("/api/config/apply", s.handleApplyConfig)
 
@@ -74,23 +67,27 @@ func (s *Server) Router() http.Handler {
 
 		// Domains + Senders
 		r.Route("/api/domains", func(r chi.Router) {
+			// List & Create Domain
 			r.Get("/", s.handleListDomains)
 			r.Post("/", s.handleSaveDomain)
+			
+			// --- THIS IS THE MISSING PART CAUSING 405 ---
+			r.Post("/import", s.handleImportSenders)
+			// ---------------------------------------------
 
+			// Domain ID Routes
 			r.Route("/{domainID}", func(r chi.Router) {
 				r.Get("/", s.handleGetDomain)
 				r.Delete("/", s.handleDeleteDomain)
-                
+
 				r.Get("/senders", s.handleListSenders)
 				r.Post("/senders", s.handleSaveSender)
-				r.Post("/import", s.handleImportSenders)
 			})
 		})
 
-		// Delete a sender by ID
 		r.Delete("/api/senders/{senderID}", s.handleDeleteSenderByID)
 
-		// Bounce accounts
+		// Bounce
 		r.Get("/api/bounces", s.handleListBounceAccounts)
 		r.Post("/api/bounces", s.handleSaveBounceAccount)
 		r.Delete("/api/bounces/{bounceID}", s.handleDeleteBounceAccount)
@@ -108,7 +105,6 @@ func (s *Server) Router() http.Handler {
 	return r
 }
 
-// securityHeaders adds security headers to all responses
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -124,10 +120,6 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
 }
-
-// ----------------------
-// Auth middleware
-// ----------------------
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +151,6 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Check if token has expired
 		if !admin.TokenExpiry.IsZero() && admin.TokenExpiry.Before(time.Now()) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token expired, please login again"})
 			return
@@ -180,10 +171,6 @@ func getAdminFromContext(ctx context.Context) *models.AdminUser {
 	}
 	return nil
 }
-
-// ----------------------
-// Status
-// ----------------------
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]string{
