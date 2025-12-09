@@ -80,9 +80,10 @@ func (s *Server) Router() http.Handler {
 			r.Route("/{domainID}", func(r chi.Router) {
 				r.Get("/", s.handleGetDomain)
 				r.Delete("/", s.handleDeleteDomain)
-
+                
 				r.Get("/senders", s.handleListSenders)
 				r.Post("/senders", s.handleSaveSender)
+				r.Post("/import", s.handleImportSenders)
 			})
 		})
 
