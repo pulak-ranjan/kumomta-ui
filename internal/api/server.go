@@ -54,6 +54,11 @@ func (s *Server) Router() http.Handler {
 
 		// System (IPs) - NEW
 		r.Get("/api/system/ips", s.handleGetSystemIPs)
+		r.Post("/api/system/ips", s.handleAddIPs)
+
+		// Dashboard Stats & AI - NEW
+		r.Get("/api/dashboard/stats", s.handleGetDashboardStats)
+		r.Post("/api/dashboard/ai", s.handleAIInsights)
 
 		// Settings
 		r.Get("/api/settings", s.handleGetSettings)
