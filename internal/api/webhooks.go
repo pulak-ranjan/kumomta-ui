@@ -1,181 +1,112 @@
-import React, { useState, useEffect } from 'react';
+package api
 
-export default function WebhooksPage() {
-  const [settings, setSettings] = useState({ webhook_url: '', webhook_enabled: false, bounce_alert_pct: 5 });
-  const [logs, setLogs] = useState([]);
-  const [testing, setTesting] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
+import (
+	"encoding/json"
+	"net/http"
 
-  const token = localStorage.getItem('kumoui_token');
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+	"github.com/pulak-ranjan/kumomta-ui/internal/models"
+)
 
-  useEffect(() => { fetchSettings(); fetchLogs(); }, []);
+// GET /api/webhooks/settings
+func (s *Server) handleGetWebhookSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := s.Store.GetSettings()
+	if err != nil {
+		// Return defaults if not found so the UI doesn't break
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"webhook_url":      "",
+			"webhook_enabled":  false,
+			"bounce_alert_pct": 5.0,
+		})
+		return
+	}
 
-  const fetchSettings = async () => {
-    try {
-      const res = await fetch('/api/webhooks/settings', { headers });
-      if (res.ok) setSettings(await res.json());
-    } catch (e) { console.error(e); }
-  };
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"webhook_url":      settings.WebhookURL,
+		"webhook_enabled":  settings.WebhookEnabled,
+		"bounce_alert_pct": settings.BounceAlertPct,
+	})
+}
 
-  const fetchLogs = async () => {
-    try {
-      const res = await fetch('/api/webhooks/logs', { headers });
-      if (res.status === 401) { window.location.href = '/login'; return; }
-      const data = await res.json();
-      setLogs(Array.isArray(data) ? data : []);
-    } catch (e) { console.error(e); setLogs([]); }
-  };
+// POST /api/webhooks/settings
+func (s *Server) handleSetWebhookSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		WebhookURL     string  `json:"webhook_url"`
+		WebhookEnabled bool    `json:"webhook_enabled"`
+		BounceAlertPct float64 `json:"bounce_alert_pct"`
+	}
 
-  const saveSettings = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const res = await fetch('/api/webhooks/settings', { method: 'POST', headers, body: JSON.stringify(settings) });
-      if (res.ok) setMessage('✅ Settings saved!');
-      else setMessage('❌ Failed to save');
-    } catch (e) { setMessage('❌ Error: ' + e.message); }
-    setSaving(false);
-    setTimeout(() => setMessage(''), 3000);
-  };
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
 
-  const testWebhook = async () => {
-    if (!settings.webhook_url) { setMessage('❌ Enter webhook URL first'); return; }
-    setTesting(true);
-    try {
-      const res = await fetch('/api/webhooks/test', { method: 'POST', headers, body: JSON.stringify({ webhook_url: settings.webhook_url }) });
-      if (res.ok) { setMessage('✅ Test sent!'); fetchLogs(); }
-      else setMessage('❌ Test failed');
-    } catch (e) { setMessage('❌ Error: ' + e.message); }
-    setTesting(false);
-    setTimeout(() => setMessage(''), 3000);
-  };
+	settings, err := s.Store.GetSettings()
+	if err != nil {
+		// Create new settings if none exist
+		settings = &models.AppSettings{}
+	}
 
-  // --- NEW TRIGGER FUNCTIONS ---
+	settings.WebhookURL = req.WebhookURL
+	settings.WebhookEnabled = req.WebhookEnabled
+	settings.BounceAlertPct = req.BounceAlertPct
 
-  const checkBounces = async () => {
-    try {
-      await fetch('/api/webhooks/check-bounces', { method: 'POST', headers });
-      setMessage('✅ Bounce check triggered');
-      fetchLogs();
-    } catch (e) { setMessage('❌ Error: ' + e.message); }
-    setTimeout(() => setMessage(''), 3000);
-  };
+	// Safety default
+	if settings.BounceAlertPct <= 0 {
+		settings.BounceAlertPct = 5.0
+	}
 
-  const checkBlacklists = async () => {
-    try {
-      await fetch('/api/system/check-blacklist', { method: 'POST', headers });
-      setMessage('✅ Blacklist check started (Check Discord/Slack)');
-    } catch (e) { setMessage('❌ Error: ' + e.message); }
-    setTimeout(() => setMessage(''), 3000);
-  };
+	if err := s.Store.UpsertSettings(settings); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save settings"})
+		return
+	}
 
-  const runSecurityAudit = async () => {
-    try {
-      await fetch('/api/system/check-security', { method: 'POST', headers });
-      setMessage('✅ Security audit started (Check Discord/Slack)');
-    } catch (e) { setMessage('❌ Error: ' + e.message); }
-    setTimeout(() => setMessage(''), 3000);
-  };
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
 
-  // -----------------------------
+// POST /api/webhooks/test
+func (s *Server) handleTestWebhook(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		WebhookURL string `json:"webhook_url"`
+	}
 
-  const formatDate = (d) => d ? new Date(d).toLocaleString() : '-';
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
 
-  return (
-    <div className="p-6 bg-gray-900 min-h-screen text-white">
-      <h1 className="text-2xl font-bold mb-6">🔔 Webhook Alerts</h1>
+	if req.WebhookURL == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "webhook_url required"})
+		return
+	}
 
-      {message && <div className="mb-4 p-3 bg-gray-800 rounded">{message}</div>}
+	// Use the WebhookService attached to Server
+	if err := s.WS.SendTestWebhook(req.WebhookURL); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-gray-800 p-6 rounded-lg">
-          <h2 className="text-lg font-semibold mb-4">Settings</h2>
-          <form onSubmit={saveSettings} className="space-y-4">
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">Webhook URL (Slack/Discord)</label>
-              <input type="url" value={settings.webhook_url} onChange={e => setSettings({...settings, webhook_url: e.target.value})}
-                placeholder="https://hooks.slack.com/..." className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2" />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">Bounce Alert Threshold (%)</label>
-              <input type="number" min="1" max="100" value={settings.bounce_alert_pct} onChange={e => setSettings({...settings, bounce_alert_pct: +e.target.value})}
-                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2" />
-              <p className="text-xs text-gray-500 mt-1">Alert when bounce rate exceeds this percentage</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="enabled" checked={settings.webhook_enabled} onChange={e => setSettings({...settings, webhook_enabled: e.target.checked})}
-                className="w-4 h-4 rounded" />
-              <label htmlFor="enabled">Enable webhook alerts</label>
-            </div>
-            <div className="flex gap-2">
-              <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded disabled:opacity-50">
-                {saving ? 'Saving...' : '💾 Save'}
-              </button>
-              <button type="button" onClick={testWebhook} disabled={testing} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded disabled:opacity-50">
-                {testing ? 'Sending...' : '🧪 Test'}
-              </button>
-            </div>
-          </form>
-        </div>
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
 
-        <div className="bg-gray-800 p-6 rounded-lg">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold">System Checks</h2>
-          </div>
-          <div className="space-y-3">
-            <button onClick={checkBounces} className="w-full bg-yellow-600 hover:bg-yellow-700 px-4 py-3 rounded text-left">
-              <div className="font-semibold">⚠️ Check Bounce Rates</div>
-              <div className="text-sm text-yellow-200">Analyze current traffic</div>
-            </button>
+// GET /api/webhooks/logs
+func (s *Server) handleGetWebhookLogs(w http.ResponseWriter, r *http.Request) {
+	// Fetch last 50 logs
+	logs, err := s.Store.ListWebhookLogs(50)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get logs"})
+		return
+	}
 
-            <button onClick={checkBlacklists} className="w-full bg-red-600 hover:bg-red-700 px-4 py-3 rounded text-left">
-              <div className="font-semibold">🚫 Check IP Blacklists</div>
-              <div className="text-sm text-red-200">Scan Spamhaus/Barracuda RBLs</div>
-            </button>
+	writeJSON(w, http.StatusOK, logs)
+}
 
-            <button onClick={runSecurityAudit} className="w-full bg-purple-600 hover:bg-purple-700 px-4 py-3 rounded text-left">
-              <div className="font-semibold">🔐 Run Security Audit</div>
-              <div className="text-sm text-purple-200">Check permissions, ports, & keys</div>
-            </button>
+// POST /api/webhooks/check-bounces
+func (s *Server) handleCheckBounces(w http.ResponseWriter, r *http.Request) {
+	// Trigger the logic in core/webhook.go
+	if err := s.WS.CheckBounceRates(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check bounces"})
+		return
+	}
 
-            <div className="bg-gray-700 p-4 rounded mt-4">
-              <h3 className="font-semibold mb-2">ℹ️ Automated Schedule</h3>
-              <ul className="text-sm text-gray-400 space-y-1">
-                <li>• <strong>Hourly:</strong> Bounce Checks, Blacklist Checks</li>
-                <li>• <strong>Daily:</strong> Traffic Summary, Security Audit</li>
-                <li>• <strong>On Change:</strong> Admin Audit Logs</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-6 bg-gray-800 p-6 rounded-lg">
-        <h2 className="text-lg font-semibold mb-4">📜 Recent Webhook Activity</h2>
-        {logs.length === 0 ? <p className="text-gray-400">No webhook activity yet</p> : (
-          <table className="w-full text-sm">
-            <thead><tr className="text-gray-400 border-b border-gray-700">
-              <th className="text-left p-2">Time</th><th className="text-left p-2">Event</th><th className="text-left p-2">Status</th><th className="text-left p-2">Response</th>
-            </tr></thead>
-            <tbody>
-              {logs.map((log, i) => (
-                <tr key={i} className="border-b border-gray-700">
-                  <td className="p-2 text-gray-400">{formatDate(log.created_at)}</td>
-                  <td className="p-2">{log.event_type}</td>
-                  <td className="p-2">
-                    <span className={`px-2 py-1 rounded text-xs ${log.status >= 200 && log.status < 300 ? 'bg-green-600' : 'bg-red-600'}`}>
-                      {log.status}
-                    </span>
-                  </td>
-                  <td className="p-2 text-gray-400 text-xs truncate max-w-xs">{log.response}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
+	writeJSON(w, http.StatusOK, map[string]string{"status": "checked"})
 }
