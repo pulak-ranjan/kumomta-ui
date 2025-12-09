@@ -61,6 +61,9 @@ func (s *Server) routes() chi.Router {
 		r.Post("/api/auth/theme", s.handleSetTheme)
 		r.Get("/api/auth/sessions", s.handleListSessions)
 
+		// Dashboard
+		r.Get("/api/dashboard/stats", s.handleGetDashboardStats)
+
 		// Settings
 		r.Get("/api/settings", s.handleGetSettings)
 		r.Post("/api/settings", s.handleSetSettings)
@@ -78,32 +81,33 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/senders/{id}", s.handleGetSender)
 		r.Put("/api/senders/{id}", s.handleUpdateSender)
 		r.Delete("/api/senders/{id}", s.handleDeleteSender)
-
-		// One-click setup
 		r.Post("/api/domains/{domainID}/senders/{id}/setup", s.handleSetupSender)
 
-		// Bounce Accounts
-		r.Get("/api/bounce", s.handleListBounce)
-		r.Post("/api/bounce", s.handleCreateBounce)
-		r.Delete("/api/bounce/{id}", s.handleDeleteBounce)
+		// Bounce Accounts (Aligned with Frontend)
+		r.Get("/api/bounces", s.handleListBounce)
+		r.Post("/api/bounces", s.handleSaveBounceAccount) // create or update
+		r.Delete("/api/bounces/{bounceID}", s.handleDeleteBounceAccount)
+		r.Post("/api/bounces/apply", s.handleApplyBounceAccounts)
 
-		// System IPs
-		r.Get("/api/ips", s.handleListIPs)
-		r.Post("/api/ips", s.handleAddIP)
-		r.Post("/api/ips/bulk", s.handleBulkAddIPs)
-		r.Post("/api/ips/cidr", s.handleAddIPsByCIDR)
-		r.Post("/api/ips/detect", s.handleDetectIPs)
-		r.Delete("/api/ips/{id}", s.handleDeleteIP)
+		// System IPs (Aligned with Frontend)
+		r.Get("/api/system/ips", s.handleListIPs)
+		r.Post("/api/system/ips", s.handleAddIP) // handles single add if body matches, or create separate if needed
+		r.Delete("/api/system/ips/{id}", s.handleDeleteIP)
+		// Frontend might use /api/system/ips for add, verify if IPsPage uses specific route
+		// Note: Frontend IPsPage uses POST /api/system/ips for CIDR/List adds.
+		// We should route that to handleBulkAddIPs or similar if logic differs, 
+		// but typically we can check body. For now let's map:
+		r.Post("/api/system/ips/bulk", s.handleBulkAddIPs) // if frontend calls this
+		r.Post("/api/system/ips/cidr", s.handleAddIPsByCIDR)
+		r.Post("/api/system/ips/detect", s.handleDetectIPs)
 
-		// DKIM
-		r.Get("/api/dkim", s.handleListDKIM)
+		// DKIM (Aligned with Frontend)
+		r.Get("/api/dkim/records", s.handleListDKIM)
 		r.Post("/api/dkim/generate", s.handleGenerateDKIM)
 
 		// DMARC
 		r.Get("/api/dmarc/{domainID}", s.handleGetDMARC)
 		r.Post("/api/dmarc/{domainID}", s.handleSetDMARC)
-
-		// DNS Records (all-in-one)
 		r.Get("/api/dns/{domainID}", s.handleGetAllDNS)
 
 		// Stats
@@ -124,6 +128,15 @@ func (s *Server) routes() chi.Router {
 		r.Post("/api/webhooks/test", s.handleTestWebhook)
 		r.Get("/api/webhooks/logs", s.handleGetWebhookLogs)
 		r.Post("/api/webhooks/check-bounces", s.handleCheckBounces)
+
+		// Config (Missing in original)
+		r.Get("/api/config/preview", s.handlePreviewConfig)
+		r.Post("/api/config/apply", s.handleApplyConfig)
+
+		// Logs (Missing in original)
+		r.Get("/api/logs/kumomta", s.handleLogsKumo)
+		r.Get("/api/logs/dovecot", s.handleLogsDovecot)
+		r.Get("/api/logs/fail2ban", s.handleLogsFail2ban)
 
 		// System
 		r.Get("/api/system/health", s.handleSystemHealth)
