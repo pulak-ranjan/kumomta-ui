@@ -14,10 +14,11 @@ export default function BouncePage() {
   const load = async () => {
     try {
       const [b, d] = await Promise.all([listBounces(), listDomains()]);
-      setList(b);
-      setDomains(d);
+      setList(Array.isArray(b) ? b : []);
+      setDomains(Array.isArray(d) ? d : []);
     } catch (err) {
       setMsg("Failed to load");
+      setList([]);
     }
   };
 
