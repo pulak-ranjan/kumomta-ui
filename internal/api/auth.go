@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/mail"
-	"time"
+	"strings"
 	"unicode"
 
 	"golang.org/x/crypto/bcrypt"
@@ -15,8 +15,8 @@ import (
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
 
-// Token validity duration
-const TokenValidityDuration = 7 * 24 * time.Hour // 7 days
+// Token validity duration (7 days)
+const TokenValidityDuration = 7 * 24 * 3600 * 1000 * 1000 * 1000 // 7 days in nanoseconds... logic simplified below
 
 type authRequest struct {
 	Email    string `json:"email"`
@@ -34,13 +34,11 @@ func generateToken() string {
 	return hex.EncodeToString(b)
 }
 
-// validateEmail checks if the email format is valid
 func validateEmail(email string) bool {
 	_, err := mail.ParseAddress(email)
 	return err == nil
 }
 
-// validatePassword checks password strength (min 8 chars, at least 1 letter and 1 number)
 func validatePassword(password string) bool {
 	if len(password) < 8 {
 		return false
@@ -66,19 +64,17 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate email format
 	if !validateEmail(req.Email) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid email format"})
 		return
 	}
 
-	// Validate password strength
 	if !validatePassword(req.Password) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters with at least 1 letter and 1 number"})
 		return
 	}
 
-	// Check if any admin exists
+	// Lock out if admin exists
 	count, _ := s.Store.AdminCount()
 	if count > 0 {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin already exists"})
@@ -91,16 +87,25 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := generateToken()
 	admin := &models.AdminUser{
 		Email:        req.Email,
 		PasswordHash: string(hash),
-		APIToken:     token,
-		TokenExpiry:  time.Now().Add(TokenValidityDuration),
 	}
 
 	if err := s.Store.CreateAdmin(admin); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create admin"})
+		return
+	}
+
+	// Create Session
+	token := generateToken()
+	ip := r.RemoteAddr
+	if strings.Contains(ip, ":") {
+		ip = strings.Split(ip, ":")[0]
+	}
+	
+	if err := s.Store.CreateSession(admin.ID, token, ip, 7*24*time.Hour); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create session"})
 		return
 	}
 
@@ -130,12 +135,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Regenerate token on login with new expiry
-	admin.APIToken = generateToken()
-	admin.TokenExpiry = time.Now().Add(TokenValidityDuration)
-	s.Store.UpdateAdmin(admin)
+	// Create Session (Max 3 enforced in store)
+	token := generateToken()
+	ip := r.RemoteAddr
+	if strings.Contains(ip, ":") {
+		ip = strings.Split(ip, ":")[0]
+	}
 
-	writeJSON(w, http.StatusOK, authResponse{Token: admin.APIToken, Email: admin.Email})
+	if err := s.Store.CreateSession(admin.ID, token, ip, 7*24*time.Hour); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create session"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, authResponse{Token: token, Email: admin.Email})
 }
 
 // GET /api/auth/me
