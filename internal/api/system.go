@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -93,12 +94,14 @@ func detectInterfaceIPs() []string {
 // ----------------------
 
 type dashboardStatsDTO struct {
-	Domains    int64  `json:"domains"`
-	Senders    int64  `json:"senders"`
-	CPULoad    string `json:"cpu_load"`
-	RAMUsage   string `json:"ram_usage"`
-	KumoStatus string `json:"kumo_status"`
-	OpenPorts  string `json:"open_ports"`
+	Domains       int64  `json:"domains"`
+	Senders       int64  `json:"senders"`
+	CPULoad       string `json:"cpu_load"`
+	RAMUsage      string `json:"ram_usage"`
+	KumoStatus    string `json:"kumo_status"`
+	DovecotStatus string `json:"dovecot_status"` // Added
+	F2BStatus     string `json:"f2b_status"`     // Added
+	OpenPorts     string `json:"open_ports"`
 }
 
 func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request) {
@@ -128,10 +131,10 @@ func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request)
 	}
 	stats.OpenPorts = strings.Join(ports, ", ")
 
-	stats.KumoStatus = "Running"
-	if _, err := net.DialTimeout("tcp", "127.0.0.1:8000", 200*time.Millisecond); err != nil {
-		stats.KumoStatus = "Unreachable"
-	}
+	// Use the serviceStatus helper from server.go (same package)
+	stats.KumoStatus = serviceStatus("kumomta")
+	stats.DovecotStatus = serviceStatus("dovecot")
+	stats.F2BStatus = serviceStatus("fail2ban")
 
 	writeJSON(w, http.StatusOK, stats)
 }
