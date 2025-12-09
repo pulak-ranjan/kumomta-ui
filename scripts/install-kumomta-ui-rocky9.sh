@@ -70,6 +70,9 @@ dnf install -y dovecot fail2ban fail2ban-firewalld || true
 echo "[*] Enabling Fail2ban (recommended for security)..."
 systemctl enable --now fail2ban 2>/dev/null || true
 
+echo "[*] Enabling Dovecot (IMAP/POP3)..."
+systemctl enable --now dovecot 2>/dev/null || true
+
 # --------------------------
 # Configure Firewall (Mail Services)
 # --------------------------
