@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -67,15 +66,10 @@ func (s *Server) Router() http.Handler {
 
 		// Domains + Senders
 		r.Route("/api/domains", func(r chi.Router) {
-			// List & Create Domain
 			r.Get("/", s.handleListDomains)
 			r.Post("/", s.handleSaveDomain)
-			
-			// --- THIS IS THE MISSING PART CAUSING 405 ---
-			r.Post("/import", s.handleImportSenders)
-			// ---------------------------------------------
+			r.Post("/import", s.handleImportSenders) // CSV Import
 
-			// Domain ID Routes
 			r.Route("/{domainID}", func(r chi.Router) {
 				r.Get("/", s.handleGetDomain)
 				r.Delete("/", s.handleDeleteDomain)
@@ -121,6 +115,7 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// Updated Auth Middleware for Sessions
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authz := r.Header.Get("Authorization")
@@ -140,19 +135,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		admin, err := s.Store.GetAdminByToken(token)
+		// Use new session-based lookup
+		admin, err := s.Store.GetAdminBySessionToken(token)
 		if err != nil {
-			if err == store.ErrNotFound {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
-				return
-			}
-			s.Store.LogError(err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to validate token"})
-			return
-		}
-
-		if !admin.TokenExpiry.IsZero() && admin.TokenExpiry.Before(time.Now()) {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token expired, please login again"})
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired token"})
 			return
 		}
 
