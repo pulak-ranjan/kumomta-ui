@@ -118,8 +118,8 @@ export default function Domains() {
         smtp_password: ""
       });
       await load();
-      setMsg("Sender saved! (DKIM & Bounce created if new)");
-      setTimeout(() => setMsg(""), 4000);
+      setMsg("Sender saved successfully.");
+      setTimeout(() => setMsg(""), 3000);
     } catch (err) {
       setMsg(err.message || "Failed to save sender");
     }
@@ -149,7 +149,6 @@ export default function Domains() {
   const dnsHelpers = (d) => {
     const mainIp = settings?.main_server_ip || "<SERVER_IP>";
 
-    // Collect all unique IPs from senders + main IP
     const ips = new Set();
     if (d.senders && d.senders.length > 0) {
       d.senders.forEach((s) => {
@@ -158,7 +157,6 @@ export default function Domains() {
     }
     ips.add(mainIp);
 
-    // Build SPF value
     const ipParts = Array.from(ips)
       .map((ip) => `ip4:${ip}`)
       .join(" ");
@@ -295,8 +293,32 @@ export default function Domains() {
                         className="flex justify-between items-center text-xs bg-slate-950/50 border border-slate-800 rounded-md px-2 py-1"
                       >
                         <div>
-                          <div>{s.email || "-"}</div>
-                          <div className="text-slate-500">
+                          <div className="flex items-center gap-2">
+                            <span>{s.email || "-"}</span>
+                            
+                            {/* DKIM Badge */}
+                            {s.has_dkim ? (
+                                <span className="bg-green-900/50 text-green-300 px-1.5 py-0.5 rounded text-[10px] border border-green-800">
+                                    DKIM
+                                </span>
+                            ) : (
+                                <span className="bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded text-[10px]">
+                                    No DKIM
+                                </span>
+                            )}
+
+                            {/* Bounce Badge */}
+                            {s.bounce_username ? (
+                                <span className="bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded text-[10px] border border-purple-800">
+                                    Bounce: {s.bounce_username}
+                                </span>
+                            ) : (
+                                <span className="bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded text-[10px]">
+                                    No Bounce
+                                </span>
+                            )}
+                          </div>
+                          <div className="text-slate-500 mt-0.5">
                             local: {s.local_part || "-"} | IP: {s.ip || "-"}
                           </div>
                         </div>
