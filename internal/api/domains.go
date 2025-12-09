@@ -318,8 +318,8 @@ func (s *Server) handleSetupSender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Generate DKIM key
-	dkimErr := core.GenerateDKIM(domain.Name, sender.LocalPart)
+	// 1. Generate DKIM key - FIX: use GenerateDKIMKey
+	dkimErr := core.GenerateDKIMKey(domain.Name, sender.LocalPart)
 
 	// 2. Create bounce account
 	bounceUser := "b-" + sender.LocalPart
