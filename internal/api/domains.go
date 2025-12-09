@@ -25,6 +25,15 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	if domains == nil {
 		domains = []models.Domain{}
 	}
+
+	// FIX: Populate virtual fields (DKIM check)
+	for i := range domains {
+		for j := range domains[i].Senders {
+			snd := &domains[i].Senders[j]
+			snd.HasDKIM = core.DKIMKeyExists(domains[i].Name, snd.LocalPart)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, domains)
 }
 
@@ -41,7 +50,6 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set defaults
 	if d.MailHost == "" {
 		d.MailHost = "mail." + d.Name
 	}
@@ -175,6 +183,14 @@ func (s *Server) handleListSenders(w http.ResponseWriter, r *http.Request) {
 		senders = []models.Sender{}
 	}
 
+	// FIX: Populate HasDKIM
+	domain, _ := s.Store.GetDomainByID(uint(domainID)) // need domain name
+	if domain != nil {
+		for i := range senders {
+			senders[i].HasDKIM = core.DKIMKeyExists(domain.Name, senders[i].LocalPart)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, senders)
 }
 
@@ -187,7 +203,6 @@ func (s *Server) handleCreateSender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify domain exists
 	domain, err := s.Store.GetDomainByID(uint(domainID))
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "domain not found"})
@@ -203,6 +218,11 @@ func (s *Server) handleCreateSender(w http.ResponseWriter, r *http.Request) {
 	snd.DomainID = uint(domainID)
 	if snd.LocalPart != "" && snd.Email == "" {
 		snd.Email = snd.LocalPart + "@" + domain.Name
+	}
+
+	// Auto-set bounce username if not provided
+	if snd.BounceUsername == "" {
+		snd.BounceUsername = "b-" + snd.LocalPart
 	}
 
 	if err := s.Store.CreateSender(&snd); err != nil {
@@ -264,6 +284,9 @@ func (s *Server) handleUpdateSender(w http.ResponseWriter, r *http.Request) {
 	if update.SMTPPassword != "" {
 		sender.SMTPPassword = update.SMTPPassword
 	}
+	if update.BounceUsername != "" {
+		sender.BounceUsername = update.BounceUsername
+	}
 
 	if err := s.Store.UpdateSender(sender); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update sender"})
@@ -318,11 +341,14 @@ func (s *Server) handleSetupSender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Generate DKIM key - FIX: use GenerateDKIMKey
+	// 1. Generate DKIM key
 	dkimErr := core.GenerateDKIMKey(domain.Name, sender.LocalPart)
 
 	// 2. Create bounce account
-	bounceUser := "b-" + sender.LocalPart
+	bounceUser := sender.BounceUsername
+	if bounceUser == "" {
+		bounceUser = "b-" + sender.LocalPart
+	}
 	bounceErr := core.CreateBounceAccount(bounceUser, domain.Name, s.Store)
 
 	result := map[string]interface{}{
