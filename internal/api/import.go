@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"encoding/csv"
 	"io"
 	"net/http"
