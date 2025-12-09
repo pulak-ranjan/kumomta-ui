@@ -1,12 +1,17 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/crypto/bcrypt"
 
+	"github.com/pulak-ranjan/kumomta-ui/internal/core"
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
@@ -28,6 +33,13 @@ type senderDTO struct {
 	Email        string `json:"email"`
 	IP           string `json:"ip"`
 	SMTPPassword string `json:"smtp_password"`
+}
+
+// Helper to generate a random password for bounce accounts
+func generateRandomPassword() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // ----------------------
@@ -195,12 +207,16 @@ func (s *Server) handleSaveSender(w http.ResponseWriter, r *http.Request) {
 
 	// Create
 	if dto.ID == 0 {
+		// 1. Fetch domain to get name
+		d, err := s.Store.GetDomainByID(domainID)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "domain not found"})
+			return
+		}
+
 		email := dto.Email
 		if email == "" && dto.LocalPart != "" {
-			// we can derive email if we know domain
-			if d, err := s.Store.GetDomainByID(domainID); err == nil {
-				email = dto.LocalPart + "@" + d.Name
-			}
+			email = dto.LocalPart + "@" + d.Name
 		}
 
 		sdr := &models.Sender{
@@ -216,6 +232,44 @@ func (s *Server) handleSaveSender(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create sender"})
 			return
 		}
+
+		// --- AUTOMATION: DKIM ---
+		if sdr.LocalPart != "" {
+			// Generate DKIM Key immediately
+			if err := core.GenerateDKIMKey(d.Name, sdr.LocalPart); err != nil {
+				s.Store.LogError(fmt.Errorf("auto-dkim failed for %s: %w", email, err))
+				// We do not fail the request, just log it.
+			}
+		}
+
+		// --- AUTOMATION: BOUNCE ACCOUNT ---
+		// Name: b-{localpart} (simple) or b-{localpart}-{random} (safer)
+		// Let's use b-{localpart} for simplicity. If it exists, we might error or just skip.
+		bounceUser := fmt.Sprintf("b-%s", sdr.LocalPart)
+		// Ensure system user username is safe? (Basic assumption: localpart is safe)
+		
+		bouncePass := generateRandomPassword()
+		bounceHash, _ := bcrypt.GenerateFromPassword([]byte(bouncePass), bcrypt.DefaultCost)
+
+		bounceAcc := &models.BounceAccount{
+			Username:     bounceUser,
+			PasswordHash: string(bounceHash),
+			Domain:       d.Name,
+			Notes:        fmt.Sprintf("Auto-created for sender %s", email),
+		}
+		
+		// Try to create in DB
+		if err := s.Store.CreateBounceAccount(bounceAcc); err == nil {
+			// If DB success, create on System
+			if sysErr := core.EnsureBounceAccount(*bounceAcc, bouncePass); sysErr != nil {
+				s.Store.LogError(fmt.Errorf("auto-bounce system user failed: %w", sysErr))
+			}
+		} else {
+			// Likely duplicate username or DB error
+			s.Store.LogError(fmt.Errorf("auto-bounce db create failed: %w", err))
+		}
+		// -----------------------------
+
 		writeJSON(w, http.StatusOK, senderToDTO(sdr))
 		return
 	}
