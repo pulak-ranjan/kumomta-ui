@@ -22,8 +22,10 @@ export default function WebhooksPage() {
   const fetchLogs = async () => {
     try {
       const res = await fetch('/api/webhooks/logs', { headers });
-      setLogs(await res.json() || []);
-    } catch (e) { console.error(e); }
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      const data = await res.json();
+      setLogs(Array.isArray(data) ? data : []);
+    } catch (e) { console.error(e); setLogs([]); }
   };
 
   const saveSettings = async (e) => {
