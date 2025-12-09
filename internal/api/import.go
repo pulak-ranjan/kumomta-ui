@@ -164,8 +164,8 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Generate DKIM
-		if err := core.GenerateDKIM(domainName, localPart); err == nil {
+		// Generate DKIM - FIX: use GenerateDKIMKey
+		if err := core.GenerateDKIMKey(domainName, localPart); err == nil {
 			stats.DKIMGenerated++
 		}
 
