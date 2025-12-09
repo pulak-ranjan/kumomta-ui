@@ -56,6 +56,11 @@ export function me() {
   return apiRequest("/auth/me");
 }
 
+// System
+export function getSystemIPs() {
+  return apiRequest("/system/ips");
+}
+
 // Status & settings
 export function getStatus() {
   return apiRequest("/status", { auth: false });
