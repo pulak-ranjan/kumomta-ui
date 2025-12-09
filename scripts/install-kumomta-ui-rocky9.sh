@@ -70,8 +70,21 @@ dnf install -y dovecot fail2ban fail2ban-firewalld || true
 echo "[*] Enabling Fail2ban (recommended for security)..."
 systemctl enable --now fail2ban 2>/dev/null || true
 
-# (Dovecot is installed but not auto-started; enable if you need IMAP/POP)
-# systemctl enable --now dovecot
+# --------------------------
+# Configure Firewall (Mail Services)
+# --------------------------
+echo "[*] Configuring firewall for Mail & IMAP..."
+# Open SMTP ports for KumoMTA (Receive & Submit)
+firewall-cmd --permanent --add-port=25/tcp
+firewall-cmd --permanent --add-port=587/tcp
+firewall-cmd --permanent --add-port=465/tcp
+
+# Open IMAP ports for Dovecot (Read Mail)
+firewall-cmd --permanent --add-service=imaps
+firewall-cmd --permanent --add-service=pop3s
+
+# Reload firewall to apply
+firewall-cmd --reload || true
 
 # --------------------------
 # Install Node.js (for frontend)
@@ -92,11 +105,15 @@ if [ -n "$PANEL_DOMAIN" ]; then
 fi
 
 # --------------------------
-# Install KumoMTA
+# Install KumoMTA (Conditional)
 # --------------------------
-echo "[*] Adding KumoMTA repository and installing KumoMTA..."
-dnf config-manager --add-repo https://openrepo.kumomta.com/files/kumomta-rocky.repo || true
-yum install -y kumomta
+if rpm -q kumomta &>/dev/null; then
+  echo "[*] KumoMTA is already installed. Skipping."
+else
+  echo "[*] Adding KumoMTA repository and installing KumoMTA..."
+  dnf config-manager --add-repo https://openrepo.kumomta.com/files/kumomta-rocky.repo || true
+  yum install -y kumomta
+fi
 
 echo "[*] Ensuring KumoMTA directories exist..."
 mkdir -p /opt/kumomta/etc/policy
@@ -135,7 +152,15 @@ chmod 755 "$DB_DIR"
 # --------------------------
 # systemd service for kumomta-ui
 # --------------------------
-echo "[*] Creating systemd service at $SERVICE_FILE ..."
+# Determine Listen Address
+# If using Nginx (Domain), bind to localhost. If no domain, bind to 0.0.0.0 to allow access.
+if [ -n "$PANEL_DOMAIN" ]; then
+  LISTEN_ADDR="127.0.0.1:9000"
+else
+  LISTEN_ADDR="0.0.0.0:9000"
+fi
+
+echo "[*] Creating systemd service at $SERVICE_FILE (Listen: $LISTEN_ADDR)..."
 cat >"$SERVICE_FILE" <<EOF
 [Unit]
 Description=KumoMTA UI Backend
@@ -146,6 +171,7 @@ User=root
 Group=root
 WorkingDirectory=$PANEL_DIR
 Environment=DB_DIR=$DB_DIR
+Environment=LISTEN_ADDR=$LISTEN_ADDR
 ExecStart=$BIN_PATH
 Restart=always
 RestartSec=5
