@@ -1,13 +1,12 @@
 package api
 
 import (
-	"crypto/rand"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"crypto/rand"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,14 +14,32 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm/clause" // Required for OnConflict
 
 	"github.com/pulak-ranjan/kumomta-ui/internal/core"
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
 
-// ... [Keep existing structs: domainDTO, senderDTO] ...
+// DTOs for Domains and Senders as seen by the API/UI.
+
+type domainDTO struct {
+	ID         uint        `json:"id"`
+	Name       string      `json:"name"`
+	MailHost   string      `json:"mail_host"`
+	BounceHost string      `json:"bounce_host"`
+	Senders    []senderDTO `json:"senders"`
+}
+
+type senderDTO struct {
+	ID             uint   `json:"id"`
+	DomainID       uint   `json:"domain_id"`
+	LocalPart      string `json:"local_part"`
+	Email          string `json:"email"`
+	IP             string `json:"ip"`
+	SMTPPassword   string `json:"smtp_password"`
+	HasDKIM        bool   `json:"has_dkim"`
+	BounceUsername string `json:"bounce_username"`
+}
 
 // Helper to generate a random password for bounce accounts
 func generateRandomPassword() string {
@@ -33,6 +50,7 @@ func generateRandomPassword() string {
 
 // Helper to check if DKIM key exists on disk
 func checkDKIMExists(domain, selector string) bool {
+	// Path: /opt/kumomta/etc/dkim/<domain>/<selector>.key
 	path := filepath.Join("/opt/kumomta/etc/dkim", domain, selector+".key")
 	if _, err := os.Stat(path); err == nil {
 		return true
@@ -121,9 +139,6 @@ func (s *Server) handleImportSenders(w http.ResponseWriter, r *http.Request) {
 			SMTPPassword: rawPass,
 		}
 
-		// Use Upsert (Save) logic manually or just Create
-		// Here we assume create new. If duplicate localpart, it might error depending on schema constraints.
-		// Let's check existence first to be safe or just create.
 		// Using CreateSender:
 		if err := s.Store.CreateSender(sender); err != nil {
 			errorsLog = append(errorsLog, fmt.Sprintf("Row %d: failed to create sender %s", i+1, email))
@@ -167,7 +182,7 @@ func (s *Server) handleImportSenders(w http.ResponseWriter, r *http.Request) {
 }
 
 // ----------------------
-// Existing Handlers...
+// Domain Handlers
 // ----------------------
 
 // GET /api/domains
