@@ -30,8 +30,16 @@ type AdminUser struct {
 	ID           uint      `gorm:"primaryKey"`
 	Email        string    `gorm:"uniqueIndex"`
 	PasswordHash string    // bcrypt hash
-	APIToken     string    `gorm:"index"`
-	TokenExpiry  time.Time
+}
+
+// NEW: Auth Sessions for multi-device support
+type AuthSession struct {
+	ID        uint      `gorm:"primaryKey"`
+	AdminID   uint      `gorm:"index"`
+	Token     string    `gorm:"uniqueIndex"`
+	ExpiresAt time.Time
+	CreatedAt time.Time
+	DeviceIP  string // optional: track IP
 }
 
 // BounceAccount represents a system user for handling bounced emails
@@ -54,7 +62,7 @@ type Sender struct {
 	SMTPPassword string
 }
 
-//Inventory of IPs available on the server
+// Inventory of IPs available on the server
 type SystemIP struct {
 	ID        uint      `gorm:"primaryKey"`
 	Value     string    `gorm:"uniqueIndex"` // IPv4 address
