@@ -61,11 +61,27 @@ export function getSystemIPs() {
   return apiRequest("/system/ips");
 }
 
-// Status & settings
+export function addSystemIPs(cidr, list) {
+  return apiRequest("/system/ips", {
+    method: "POST",
+    body: { cidr, list }
+  });
+}
+
+// Status & Dashboard
 export function getStatus() {
   return apiRequest("/status", { auth: false });
 }
 
+export function getDashboardStats() {
+  return apiRequest("/dashboard/stats");
+}
+
+export function getAIInsights() {
+  return apiRequest("/dashboard/ai", { method: "POST" });
+}
+
+// Settings
 export function getSettings() {
   return apiRequest("/settings");
 }
