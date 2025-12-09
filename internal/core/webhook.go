@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -22,7 +24,8 @@ func NewWebhookService(st *store.Store) *WebhookService {
 	return &WebhookService{Store: st}
 }
 
-// SlackMessage represents a Slack webhook payload
+// --- Payload Structures ---
+
 type SlackMessage struct {
 	Text        string       `json:"text,omitempty"`
 	Username    string       `json:"username,omitempty"`
@@ -45,7 +48,6 @@ type Field struct {
 	Short bool   `json:"short"`
 }
 
-// DiscordMessage represents a Discord webhook payload
 type DiscordMessage struct {
 	Content  string         `json:"content,omitempty"`
 	Username string         `json:"username,omitempty"`
@@ -71,7 +73,8 @@ type DiscordFooter struct {
 	Text string `json:"text"`
 }
 
-// getSenderName helper to use hostname or fallback
+// --- Logic ---
+
 func (ws *WebhookService) getSenderName() string {
 	settings, err := ws.Store.GetSettings()
 	if err == nil && settings != nil && settings.MainHostname != "" {
@@ -80,190 +83,261 @@ func (ws *WebhookService) getSenderName() string {
 	return "KumoMTA UI"
 }
 
-// SendBounceAlert sends an alert when bounce rate is high
-func (ws *WebhookService) SendBounceAlert(domain string, bounceRate float64, sent, bounced int64) error {
+// 1. Audit Log (Task Modifications)
+func (ws *WebhookService) SendAuditLog(action, details, user string) error {
 	settings, err := ws.Store.GetSettings()
 	if err != nil || settings == nil || !settings.WebhookEnabled || settings.WebhookURL == "" {
 		return nil
 	}
 
-	// Check if bounce rate exceeds threshold
-	if bounceRate < settings.BounceAlertPct {
-		return nil
-	}
-
 	isDiscord := strings.Contains(settings.WebhookURL, "discord.com")
-	senderName := settings.MainHostname
-	if senderName == "" {
-		senderName = "KumoMTA Alert"
-	}
+	senderName := ws.getSenderName()
 
 	var payload []byte
-	var eventType = "bounce_alert"
-
 	if isDiscord {
 		msg := DiscordMessage{
 			Username: senderName,
-			Embeds: []DiscordEmbed{
-				{
-					Title:       "⚠️ High Bounce Rate Alert",
-					Description: fmt.Sprintf("Domain **%s** has a high bounce rate", domain),
-					Color:       15158332, // Red
-					Fields: []DiscordField{
-						{Name: "Bounce Rate", Value: fmt.Sprintf("%.2f%%", bounceRate), Inline: true},
-						{Name: "Total Sent", Value: fmt.Sprintf("%d", sent), Inline: true},
-						{Name: "Bounced", Value: fmt.Sprintf("%d", bounced), Inline: true},
-					},
-					Footer:    &DiscordFooter{Text: "KumoMTA UI"},
-					Timestamp: time.Now().Format(time.RFC3339),
+			Embeds: []DiscordEmbed{{
+				Title:       "🛠️ Audit Log",
+				Description: fmt.Sprintf("**%s** performed action: %s", user, action),
+				Color:       10181046, // Purple
+				Fields: []DiscordField{
+					{Name: "Details", Value: details, Inline: false},
 				},
-			},
+				Footer:    &DiscordFooter{Text: "System Audit"},
+				Timestamp: time.Now().Format(time.RFC3339),
+			}},
 		}
 		payload, _ = json.Marshal(msg)
 	} else {
-		// Slack format
 		msg := SlackMessage{
 			Username:  senderName,
-			IconEmoji: ":warning:",
-			Attachments: []Attachment{
-				{
-					Color: "danger",
-					Title: "⚠️ High Bounce Rate Alert",
-					Text:  fmt.Sprintf("Domain *%s* has a high bounce rate", domain),
-					Fields: []Field{
-						{Title: "Bounce Rate", Value: fmt.Sprintf("%.2f%%", bounceRate), Short: true},
-						{Title: "Total Sent", Value: fmt.Sprintf("%d", sent), Short: true},
-						{Title: "Bounced", Value: fmt.Sprintf("%d", bounced), Short: true},
-					},
-					Footer: "KumoMTA UI",
-					Ts:     time.Now().Unix(),
-				},
-			},
+			IconEmoji: ":hammer_and_wrench:",
+			Attachments: []Attachment{{
+				Color: "#9b59b6",
+				Title: "🛠️ Audit Log",
+				Text:  fmt.Sprintf("*%s* performed action: %s\n> %s", user, action, details),
+				Footer: "System Audit",
+				Ts:     time.Now().Unix(),
+			}},
 		}
 		payload, _ = json.Marshal(msg)
 	}
 
-	return ws.send(settings.WebhookURL, payload, eventType)
+	return ws.send(settings.WebhookURL, payload, "audit_log")
 }
 
-// SendDailySummary sends a daily stats summary
-func (ws *WebhookService) SendDailySummary(stats map[string]DayStats) error {
+// 2. Blacklist Checker
+func (ws *WebhookService) CheckBlacklists() error {
+	ips, err := ws.Store.ListSystemIPs()
+	if err != nil {
+		return err
+	}
+
+	rbls := []string{
+		"zen.spamhaus.org",
+		"b.barracudacentral.org",
+		"bl.spamcop.net",
+	}
+
+	var issues []string
+
+	for _, ipObj := range ips {
+		ip := ipObj.Value
+		parts := strings.Split(ip, ".")
+		if len(parts) != 4 {
+			continue
+		}
+		reversedIP := fmt.Sprintf("%s.%s.%s.%s", parts[3], parts[2], parts[1], parts[0])
+
+		for _, rbl := range rbls {
+			lookup := fmt.Sprintf("%s.%s", reversedIP, rbl)
+			if result, err := net.LookupHost(lookup); err == nil && len(result) > 0 {
+				issues = append(issues, fmt.Sprintf("IP **%s** listed on **%s**", ip, rbl))
+			}
+		}
+	}
+
+	if len(issues) > 0 {
+		return ws.sendAlert("🚫 Blacklist Alert", "IPs found on RBLs!", issues, 15158332) // Red
+	}
+	return nil
+}
+
+// 3. Security Audit
+func (ws *WebhookService) RunSecurityAudit() error {
+	var risks []string
+
+	dbPath := os.Getenv("DB_DIR")
+	if dbPath == "" {
+		dbPath = "/var/lib/kumomta-ui"
+	}
+	info, err := os.Stat(dbPath + "/panel.db")
+	if err == nil {
+		mode := info.Mode().Perm()
+		if mode&0004 != 0 {
+			risks = append(risks, "DB file is world-readable (chmod 600 required)")
+		}
+	}
+
+	// Check for Debug Port (8000)
+	if conn, err := net.DialTimeout("tcp", "0.0.0.0:8000", 1*time.Second); err == nil {
+		conn.Close()
+		risks = append(risks, "Port 8000 (HTTP) appears open publicly")
+	}
+
+	settings, _ := ws.Store.GetSettings()
+	if settings != nil && settings.AIAPIKey == "" {
+		risks = append(risks, "AI API Key missing (Features disabled)")
+	}
+
+	if len(risks) > 0 {
+		return ws.sendAlert("🔐 Security Alert", "Security issues detected", risks, 15105570) // Orange
+	}
+	return nil
+}
+
+// 4. Daily Summary
+func (ws *WebhookService) SendDailySummary(stats map[string][]models.DayStats) error {
 	settings, err := ws.Store.GetSettings()
 	if err != nil || settings == nil || !settings.WebhookEnabled || settings.WebhookURL == "" {
 		return nil
 	}
-
-	isDiscord := strings.Contains(settings.WebhookURL, "discord.com")
-	senderName := settings.MainHostname
-	if senderName == "" {
-		senderName = "KumoMTA Report"
-	}
-
+	
 	totalSent := int64(0)
 	totalDelivered := int64(0)
 	totalBounced := int64(0)
 
-	for _, s := range stats {
-		totalSent += s.Sent
-		totalDelivered += s.Delivered
-		totalBounced += s.Bounced
-	}
-
-	deliveryRate := float64(0)
-	if totalSent > 0 {
-		deliveryRate = float64(totalDelivered) / float64(totalSent) * 100
-	}
-
-	var payload []byte
-	eventType := "daily_summary"
-
-	if isDiscord {
-		msg := DiscordMessage{
-			Username: senderName,
-			Embeds: []DiscordEmbed{
-				{
-					Title:       "📊 Daily Sending Summary",
-					Description: fmt.Sprintf("Stats for %s", time.Now().Format("2006-01-02")),
-					Color:       3447003, // Blue
-					Fields: []DiscordField{
-						{Name: "Total Sent", Value: fmt.Sprintf("%d", totalSent), Inline: true},
-						{Name: "Delivered", Value: fmt.Sprintf("%d", totalDelivered), Inline: true},
-						{Name: "Bounced", Value: fmt.Sprintf("%d", totalBounced), Inline: true},
-						{Name: "Delivery Rate", Value: fmt.Sprintf("%.2f%%", deliveryRate), Inline: true},
-						{Name: "Domains Active", Value: fmt.Sprintf("%d", len(stats)), Inline: true},
-					},
-					Footer:    &DiscordFooter{Text: "KumoMTA UI"},
-					Timestamp: time.Now().Format(time.RFC3339),
-				},
-			},
+	for _, days := range stats {
+		for _, d := range days {
+			totalSent += d.Sent
+			totalDelivered += d.Delivered
+			totalBounced += d.Bounced
 		}
-		payload, _ = json.Marshal(msg)
-	} else {
-		msg := SlackMessage{
-			Username:  senderName,
-			IconEmoji: ":bar_chart:",
-			Attachments: []Attachment{
-				{
-					Color: "good",
-					Title: "📊 Daily Sending Summary",
-					Text:  fmt.Sprintf("Stats for %s", time.Now().Format("2006-01-02")),
-					Fields: []Field{
-						{Title: "Total Sent", Value: fmt.Sprintf("%d", totalSent), Short: true},
-						{Title: "Delivered", Value: fmt.Sprintf("%d", totalDelivered), Short: true},
-						{Title: "Bounced", Value: fmt.Sprintf("%d", totalBounced), Short: true},
-						{Title: "Delivery Rate", Value: fmt.Sprintf("%.2f%%", deliveryRate), Short: true},
-					},
-					Footer: "KumoMTA UI",
-					Ts:     time.Now().Unix(),
-				},
-			},
-		}
-		payload, _ = json.Marshal(msg)
 	}
 
-	return ws.send(settings.WebhookURL, payload, eventType)
+	summary := []string{
+		fmt.Sprintf("Sent: %d", totalSent),
+		fmt.Sprintf("Delivered: %d", totalDelivered),
+		fmt.Sprintf("Bounced: %d", totalBounced),
+	}
+
+	return ws.sendAlert("📊 Daily Summary", "Traffic report for last 24h", summary, 3447003) // Blue
 }
 
-// SendTestWebhook sends a test message
+// 5. Test Webhook
 func (ws *WebhookService) SendTestWebhook(webhookURL string) error {
+	senderName := ws.getSenderName()
 	isDiscord := strings.Contains(webhookURL, "discord.com")
 	
-	// Fetch hostname for test message
-	senderName := ws.getSenderName()
-
 	var payload []byte
-
 	if isDiscord {
 		msg := DiscordMessage{
 			Username: senderName,
-			Embeds: []DiscordEmbed{
-				{
-					Title:       "✅ Webhook Test Successful",
-					Description: "Your KumoMTA UI webhook is configured correctly!",
-					Color:       5763719, // Green
-					Footer:      &DiscordFooter{Text: "KumoMTA UI"},
-					Timestamp:   time.Now().Format(time.RFC3339),
+			Embeds: []DiscordEmbed{{
+				Title:       "✅ Test Successful",
+				Description: "Webhook is working correctly.",
+				Color:       5763719, // Green
+				Footer:      &DiscordFooter{Text: "KumoMTA UI"},
+				Timestamp:   time.Now().Format(time.RFC3339),
+			}},
+		}
+		payload, _ = json.Marshal(msg)
+	} else {
+		msg := SlackMessage{
+			Username: senderName,
+			Text: "✅ Test Successful! Webhook is working.",
+		}
+		payload, _ = json.Marshal(msg)
+	}
+	return ws.send(webhookURL, payload, "test")
+}
+
+// 6. Bounce Rates
+func (ws *WebhookService) CheckBounceRates() error {
+	// Reusing logic: get stats for today (1 day)
+	stats, err := GetAllDomainsStats(1)
+	if err != nil {
+		return err
+	}
+	
+	settings, err := ws.Store.GetSettings()
+	if err != nil || settings == nil || !settings.WebhookEnabled {
+		return nil
+	}
+
+	var alerts []string
+	
+	for domain, days := range stats {
+		if len(days) == 0 { continue }
+		today := days[len(days)-1]
+		if today.Sent < 10 { continue } // Ignore low volume
+
+		rate := float64(today.Bounced) / float64(today.Sent) * 100
+		if rate >= settings.BounceAlertPct {
+			alerts = append(alerts, fmt.Sprintf("**%s**: %.1f%% bounce rate (%d/%d)", domain, rate, today.Bounced, today.Sent))
+		}
+	}
+
+	if len(alerts) > 0 {
+		return ws.sendAlert("⚠️ High Bounce Rate", "Domains exceeding threshold:", alerts, 15158332)
+	}
+	return nil
+}
+
+// --- Internals ---
+
+func (ws *WebhookService) sendAlert(title, desc string, items []string, color int) error {
+	settings, err := ws.Store.GetSettings()
+	if err != nil || settings == nil || !settings.WebhookEnabled || settings.WebhookURL == "" {
+		return nil
+	}
+
+	isDiscord := strings.Contains(settings.WebhookURL, "discord.com")
+	senderName := ws.getSenderName()
+	
+	itemList := strings.Join(items, "\n• ")
+	if len(items) > 0 {
+		itemList = "• " + itemList
+	}
+
+	var payload []byte
+	if isDiscord {
+		msg := DiscordMessage{
+			Username: senderName,
+			Embeds: []DiscordEmbed{{
+				Title:       title,
+				Description: desc,
+				Color:       color,
+				Fields: []DiscordField{
+					{Name: "Details", Value: itemList, Inline: false},
 				},
-			},
+				Footer:    &DiscordFooter{Text: "KumoMTA Alert"},
+				Timestamp: time.Now().Format(time.RFC3339),
+			}},
 		}
 		payload, _ = json.Marshal(msg)
 	} else {
 		msg := SlackMessage{
 			Username:  senderName,
-			IconEmoji: ":white_check_mark:",
-			Text:      "✅ Webhook Test Successful! Your KumoMTA UI webhook is configured correctly.",
+			IconEmoji: ":warning:",
+			Attachments: []Attachment{{
+				Color: fmt.Sprintf("#%06x", color),
+				Title: title,
+				Text:  fmt.Sprintf("%s\n\n%s", desc, itemList),
+				Footer: "KumoMTA Alert",
+				Ts:     time.Now().Unix(),
+			}},
 		}
 		payload, _ = json.Marshal(msg)
 	}
 
-	return ws.send(webhookURL, payload, "test")
+	return ws.send(settings.WebhookURL, payload, "alert")
 }
 
 func (ws *WebhookService) send(url string, payload []byte, eventType string) error {
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payload))
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -276,11 +350,6 @@ func (ws *WebhookService) send(url string, payload []byte, eventType string) err
 
 	body, _ := io.ReadAll(resp.Body)
 	ws.logWebhook(eventType, string(payload), resp.StatusCode, string(body))
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
-	}
-
 	return nil
 }
 
@@ -293,28 +362,4 @@ func (ws *WebhookService) logWebhook(eventType, payload string, status int, resp
 		CreatedAt: time.Now(),
 	}
 	ws.Store.CreateWebhookLog(log)
-}
-
-// CheckBounceRates checks all domains and sends alerts if needed
-func (ws *WebhookService) CheckBounceRates() error {
-	stats, err := GetAllDomainsStats(1) // Today only
-	if err != nil {
-		return err
-	}
-
-	for domain, dayStats := range stats {
-		if len(dayStats) == 0 {
-			continue
-		}
-
-		today := dayStats[len(dayStats)-1]
-		if today.Sent == 0 {
-			continue
-		}
-
-		bounceRate := float64(today.Bounced) / float64(today.Sent) * 100
-		ws.SendBounceAlert(domain, bounceRate, today.Sent, today.Bounced)
-	}
-
-	return nil
 }
