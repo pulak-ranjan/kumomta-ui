@@ -216,7 +216,7 @@ kumo.on('init', function()
   }
 
   kumo.start_esmtp_listener {
-    listen = '127.0.0.1:25',
+    listen = '0.0.0.0:25',
     hostname = '`)
 	b.WriteString(mainHostname)
 	b.WriteString(`',
