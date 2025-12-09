@@ -210,7 +210,7 @@ kumo.on('init', function()
   }
 
   kumo.start_http_listener {
-    listen = '0.0.0.0:8000',
+    listen = '127.0.0.1:8000',
     use_tls = false,
     trusted_hosts = { '127.0.0.1' },
   }
