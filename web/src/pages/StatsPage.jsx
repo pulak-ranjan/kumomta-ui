@@ -14,7 +14,7 @@ export default function StatsPage() {
   const [selectedDomain, setSelectedDomain] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}` };
 
   useEffect(() => { fetchStats(); fetchSummary(); }, [days]);
