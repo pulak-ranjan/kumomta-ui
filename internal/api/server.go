@@ -10,12 +10,14 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
+	"github.com/pulak-ranjan/kumomta-ui/internal/core"
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
 
 type Server struct {
 	Store  *store.Store
+	WS     *core.WebhookService
 	Router chi.Router
 }
 
@@ -23,8 +25,8 @@ type contextKey string
 
 const adminContextKey contextKey = "admin"
 
-func NewServer(st *store.Store) *Server {
-	s := &Server{Store: st}
+func NewServer(st *store.Store, ws *core.WebhookService) *Server {
+	s := &Server{Store: st, WS: ws}
 	s.Router = s.routes()
 	return s
 }
@@ -35,7 +37,7 @@ func (s *Server) routes() chi.Router {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	
-	// FIX: Invalid CORS config (Wildcard + Credentials) replaced with dynamic origin check
+	// FIX: Dynamic CORS for Credentials support
 	r.Use(cors.Handler(cors.Options{
 		AllowOriginFunc:  func(r *http.Request, origin string) bool { return true },
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -127,6 +129,10 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/webhooks/logs", s.handleGetWebhookLogs)
 		r.Post("/api/webhooks/check-bounces", s.handleCheckBounces)
 
+		// NEW: System Actions (Manual triggers for frontend)
+		r.Post("/api/system/check-blacklist", s.handleCheckBlacklist)
+		r.Post("/api/system/check-security", s.handleCheckSecurity)
+
 		// Config
 		r.Get("/api/config/preview", s.handlePreviewConfig)
 		r.Post("/api/config/apply", s.handleApplyConfig)
@@ -148,6 +154,8 @@ func (s *Server) routes() chi.Router {
 
 	return r
 }
+
+// --- Middlewares & Helpers ---
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,10 +196,21 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// POST /api/auth/logout
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	authHeader := r.Header.Get("Authorization")
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	s.Store.DeleteSession(token)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
+}
+
+// --- NEW System Handlers (for frontend buttons) ---
+
+func (s *Server) handleCheckBlacklist(w http.ResponseWriter, r *http.Request) {
+	go s.WS.CheckBlacklists()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "Blacklist check started. Alerts will be sent via webhook."})
+}
+
+func (s *Server) handleCheckSecurity(w http.ResponseWriter, r *http.Request) {
+	go s.WS.RunSecurityAudit()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "Security audit started. Alerts will be sent via webhook."})
 }
