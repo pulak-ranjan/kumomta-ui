@@ -1,8 +1,8 @@
 package store
 
 import (
-	"errors"
 	"log"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -26,6 +26,7 @@ func NewStore(path string) (*Store, error) {
 		&models.Domain{},
 		&models.Sender{},
 		&models.AdminUser{},
+		&models.AuthSession{}, // <--- Added
 		&models.BounceAccount{},
 		&models.SystemIP{},
 	); err != nil {
@@ -42,6 +43,52 @@ func (s *Store) LogError(err error) {
 }
 
 var ErrNotFound = gorm.ErrRecordNotFound
+
+// ----------------------
+// Auth Sessions (Multi-Device)
+// ----------------------
+
+// CreateSession creates a new token and ensures max 3 active sessions
+func (s *Store) CreateSession(adminID uint, token string, ip string, duration time.Duration) error {
+	// 1. Cleanup expired
+	s.DB.Where("expires_at < ?", time.Now()).Delete(&models.AuthSession{})
+
+	// 2. Enforce Max 3 Limit (Delete oldest if needed)
+	var count int64
+	s.DB.Model(&models.AuthSession{}).Where("admin_id = ?", adminID).Count(&count)
+	if count >= 3 {
+		var oldest models.AuthSession
+		s.DB.Where("admin_id = ?", adminID).Order("created_at asc").First(&oldest)
+		if oldest.ID != 0 {
+			s.DB.Delete(&oldest)
+		}
+	}
+
+	// 3. Create New
+	sess := models.AuthSession{
+		AdminID:   adminID,
+		Token:     token,
+		ExpiresAt: time.Now().Add(duration),
+		DeviceIP:  ip,
+	}
+	return s.DB.Create(&sess).Error
+}
+
+func (s *Store) GetAdminBySessionToken(token string) (*models.AdminUser, error) {
+	var sess models.AuthSession
+	err := s.DB.Where("token = ? AND expires_at > ?", token, time.Now()).First(&sess).Error
+	if err != nil {
+		return nil, err
+	}
+
+	var admin models.AdminUser
+	err = s.DB.First(&admin, sess.AdminID).Error
+	return &admin, err
+}
+
+func (s *Store) DeleteSession(token string) error {
+	return s.DB.Where("token = ?", token).Delete(&models.AuthSession{}).Error
+}
 
 // ----------------------
 // App Settings
@@ -180,18 +227,6 @@ func (s *Store) GetAdminByEmail(email string) (*models.AdminUser, error) {
 	return &u, nil
 }
 
-func (s *Store) GetAdminByToken(token string) (*models.AdminUser, error) {
-	var u models.AdminUser
-	err := s.DB.Where("api_token = ?", token).First(&u).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &u, nil
-}
-
 func (s *Store) CreateAdmin(u *models.AdminUser) error {
 	return s.DB.Create(u).Error
 }
@@ -244,13 +279,10 @@ func (s *Store) ListSystemIPs() ([]models.SystemIP, error) {
 	return list, err
 }
 
-// CreateSystemIP inserts a single IP (ignoring duplicates)
-// This is the function that was missing.
 func (s *Store) CreateSystemIP(ip *models.SystemIP) error {
 	return s.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(ip).Error
 }
 
-// CreateSystemIPs inserts multiple IPs (ignoring duplicates)
 func (s *Store) CreateSystemIPs(ips []models.SystemIP) error {
 	if len(ips) == 0 {
 		return nil
