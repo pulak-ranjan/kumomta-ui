@@ -31,7 +31,10 @@ function ProtectedRoute({ children }) {
 function Sidebar() {
   const location = useLocation();
   const isActive = (path) => location.pathname === path;
-  const { logout } = useAuth();
+  const logout = () => {
+    localStorage.removeItem('kumoui_token'); // FIXED KEY
+    window.location.href = '/login';
+  };
 
   const links = [
     { path: '/', icon: '📊', label: 'Dashboard' },
