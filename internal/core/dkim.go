@@ -14,8 +14,6 @@ import (
 )
 
 // Base path for DKIM keys on disk.
-// Private keys: /opt/kumomta/etc/dkim/<domain>/<selector>.key
-// Public keys:  /opt/kumomta/etc/dkim/<domain>/<selector>.pub
 const DKIMBasePath = "/opt/kumomta/etc/dkim"
 
 func dkimKeyPaths(domain, selector string) (privPath, pubPath, dir string) {
@@ -25,8 +23,16 @@ func dkimKeyPaths(domain, selector string) (privPath, pubPath, dir string) {
 	return
 }
 
-// GenerateDKIMKey creates a new RSA keypair for domain+selector
-// and writes them to DKIMBasePath/domain/(selector.key|selector.pub).
+// FIX: New helper to check if DKIM key exists
+func DKIMKeyExists(domain, selector string) bool {
+	privPath, _, _ := dkimKeyPaths(domain, selector)
+	if _, err := os.Stat(privPath); err == nil {
+		return true
+	}
+	return false
+}
+
+// GenerateDKIMKey creates a new RSA keypair
 func GenerateDKIMKey(domain, selector string) error {
 	privPath, pubPath, dir := dkimKeyPaths(domain, selector)
 
@@ -40,14 +46,14 @@ func GenerateDKIMKey(domain, selector string) error {
 		return fmt.Errorf("generate rsa key: %w", err)
 	}
 
-	// Encode private key in PEM (PKCS1)
+	// Encode private key
 	privBytes := x509.MarshalPKCS1PrivateKey(privKey)
 	privPem := pem.EncodeToMemory(&pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: privBytes,
 	})
 
-	// Encode public key in PEM (PKIX)
+	// Encode public key
 	pubBytes, err := x509.MarshalPKIXPublicKey(&privKey.PublicKey)
 	if err != nil {
 		return fmt.Errorf("marshal public key: %w", err)
@@ -74,12 +80,11 @@ func GenerateDKIMKey(domain, selector string) error {
 type DKIMDNSRecord struct {
 	Domain   string `json:"domain"`
 	Selector string `json:"selector"`
-	DNSName  string `json:"dns_name"`  // selector._domainkey.domain
-	DNSValue string `json:"dns_value"` // v=DKIM1; k=rsa; p=...
+	DNSName  string `json:"dns_name"`  
+	DNSValue string `json:"dns_value"` 
 }
 
-// ListDKIMDNSRecords iterates over all domains+senders, reads .pub files,
-// and constructs ready-to-paste DNS records.
+// ListDKIMDNSRecords iterates over all domains+senders
 func ListDKIMDNSRecords(snap *Snapshot) ([]DKIMDNSRecord, error) {
 	var records []DKIMDNSRecord
 
@@ -93,7 +98,6 @@ func ListDKIMDNSRecords(snap *Snapshot) ([]DKIMDNSRecord, error) {
 			_, pubPath, _ := dkimKeyPaths(d.Name, selector)
 			data, err := os.ReadFile(pubPath)
 			if err != nil {
-				// If file doesn't exist, just skip this one
 				continue
 			}
 
@@ -117,7 +121,6 @@ func ListDKIMDNSRecords(snap *Snapshot) ([]DKIMDNSRecord, error) {
 	return records, nil
 }
 
-// extractPEMBase64 strips PEM header/footer and newlines to get pure base64.
 func extractPEMBase64(pemStr string) string {
 	lines := strings.Split(pemStr, "\n")
 	var b strings.Builder
@@ -134,7 +137,6 @@ func extractPEMBase64(pemStr string) string {
 	return b.String()
 }
 
-// GenerateDKIMForDomainAllSenders generates keys for all senders of a domain.
 func GenerateDKIMForDomainAllSenders(domain models.Domain) error {
 	for _, s := range domain.Senders {
 		if s.LocalPart == "" {
