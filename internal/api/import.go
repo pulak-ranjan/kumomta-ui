@@ -50,6 +50,8 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 	senderIdx := colMap["sender"]
 	localPartIdx := colMap["localpart"]
 	ipIdx := colMap["ip"]
+	passIdx := colMap["password"] // New: Password support
+	bounceIdx := colMap["bounce"] // New: Custom bounce user support
 
 	var stats struct {
 		DomainsCreated  int      `json:"domains_created"`
@@ -133,6 +135,18 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 			ip = strings.TrimSpace(record[ipIdx])
 		}
 
+		// Get Password
+		password := ""
+		if passIdx > 0 && passIdx < len(record) {
+			password = strings.TrimSpace(record[passIdx])
+		}
+
+		// Get Custom Bounce User
+		customBounce := ""
+		if bounceIdx > 0 && bounceIdx < len(record) {
+			customBounce = strings.TrimSpace(record[bounceIdx])
+		}
+
 		// Check if already processed
 		senderKey := domainName + ":" + localPart
 		if processedSenders[senderKey] {
@@ -142,10 +156,11 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 
 		// Create sender
 		sender := &models.Sender{
-			DomainID:  domain.ID,
-			LocalPart: localPart,
-			Email:     localPart + "@" + domainName,
-			IP:        ip,
+			DomainID:     domain.ID,
+			LocalPart:    localPart,
+			Email:        localPart + "@" + domainName,
+			IP:           ip,
+			SMTPPassword: password, // Save password
 		}
 		if err := s.Store.CreateSender(sender); err != nil {
 			stats.Errors = append(stats.Errors, "failed to create sender: "+sender.Email)
@@ -159,18 +174,24 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 				Value:     ip,
 				CreatedAt: time.Now(),
 			}
+			// Ignore error if IP already exists
 			if err := s.Store.CreateSystemIP(ipModel); err == nil {
 				stats.IPsAdded++
 			}
 		}
 
-		// Generate DKIM - FIX: use GenerateDKIMKey
+		// Generate DKIM
 		if err := core.GenerateDKIMKey(domainName, localPart); err == nil {
 			stats.DKIMGenerated++
 		}
 
-		// Create unique bounce account
+		// Determine Bounce Username
 		bounceUser := "b-" + localPart
+		if customBounce != "" {
+			bounceUser = customBounce
+		}
+
+		// Create bounce account
 		if err := core.CreateBounceAccount(bounceUser, domainName, s.Store); err == nil {
 			stats.BouncesCreated++
 		}
