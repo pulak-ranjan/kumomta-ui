@@ -10,20 +10,36 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarEleme
 export default function StatsPage() {
   const [stats, setStats] = useState({});
   const [summary, setSummary] = useState(null);
+  const [domainList, setDomainList] = useState([]);
   const [days, setDays] = useState(7);
   const [selectedDomain, setSelectedDomain] = useState('');
   const [loading, setLoading] = useState(true);
 
+  // FIX: Use correct token key
   const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}` };
 
-  useEffect(() => { fetchStats(); fetchSummary(); }, [days]);
+  useEffect(() => { 
+    fetchDomains();
+    fetchStats(); 
+    fetchSummary(); 
+  }, [days]);
+
+  const fetchDomains = async () => {
+    try {
+      const res = await fetch('/api/domains', { headers });
+      const data = await res.json();
+      setDomainList(Array.isArray(data) ? data : []);
+    } catch (e) { console.error(e); }
+  };
 
   const fetchStats = async () => {
     setLoading(true);
     try {
       const res = await fetch(`/api/stats/domains?days=${days}`, { headers });
-      setStats(await res.json() || {});
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      const data = await res.json();
+      setStats(data || {});
     } catch (e) { console.error(e); }
     setLoading(false);
   };
@@ -31,7 +47,7 @@ export default function StatsPage() {
   const fetchSummary = async () => {
     try {
       const res = await fetch('/api/stats/summary', { headers });
-      setSummary(await res.json());
+      if (res.ok) setSummary(await res.json());
     } catch (e) { console.error(e); }
   };
 
@@ -40,12 +56,23 @@ export default function StatsPage() {
     fetchStats(); fetchSummary();
   };
 
-  const domains = Object.keys(stats);
+  const availableDomains = domainList.length > 0 
+    ? domainList.map(d => d.name) 
+    : Object.keys(stats);
 
   const getChartData = () => {
     if (selectedDomain && stats[selectedDomain]) return stats[selectedDomain];
+    
+    // If specific domain selected but no stats, return empty days
+    if (selectedDomain && !stats[selectedDomain]) {
+       return Array.from({length: days}).map((_, i) => ({
+         date: new Date(Date.now() - (days - 1 - i) * 86400000).toISOString().split('T')[0],
+         sent: 0, delivered: 0, bounced: 0
+       }));
+    }
+
     const agg = {};
-    domains.forEach(d => (stats[d] || []).forEach(day => {
+    Object.keys(stats).forEach(d => (stats[d] || []).forEach(day => {
       if (!agg[day.date]) agg[day.date] = { date: day.date, sent: 0, delivered: 0, bounced: 0, deferred: 0 };
       agg[day.date].sent += day.sent || 0;
       agg[day.date].delivered += day.delivered || 0;
@@ -68,10 +95,18 @@ export default function StatsPage() {
   };
 
   const barData = {
-    labels: domains.slice(0, 10),
+    labels: availableDomains.slice(0, 10),
     datasets: [
-      { label: 'Sent', data: domains.slice(0, 10).map(d => (stats[d] || []).reduce((s, x) => s + (x.sent || 0), 0)), backgroundColor: '#3b82f6' },
-      { label: 'Bounced', data: domains.slice(0, 10).map(d => (stats[d] || []).reduce((s, x) => s + (x.bounced || 0), 0)), backgroundColor: '#ef4444' },
+      { 
+        label: 'Sent', 
+        data: availableDomains.slice(0, 10).map(d => (stats[d] || []).reduce((s, x) => s + (x.sent || 0), 0)), 
+        backgroundColor: '#3b82f6' 
+      },
+      { 
+        label: 'Bounced', 
+        data: availableDomains.slice(0, 10).map(d => (stats[d] || []).reduce((s, x) => s + (x.bounced || 0), 0)), 
+        backgroundColor: '#ef4444' 
+      },
     ],
   };
 
@@ -91,7 +126,7 @@ export default function StatsPage() {
           </select>
           <select value={selectedDomain} onChange={e => setSelectedDomain(e.target.value)} className="bg-gray-800 border border-gray-700 rounded px-3 py-2">
             <option value="">All Domains</option>
-            {domains.map(d => <option key={d} value={d}>{d}</option>)}
+            {availableDomains.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
           <button onClick={refreshStats} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">🔄 Refresh</button>
         </div>
@@ -118,15 +153,19 @@ export default function StatsPage() {
           <table className="w-full text-sm">
             <thead><tr className="text-gray-400 border-b border-gray-700"><th className="text-left p-2">Domain</th><th className="text-right p-2">Sent</th><th className="text-right p-2">Delivered</th><th className="text-right p-2">Bounced</th><th className="text-right p-2">Rate</th></tr></thead>
             <tbody>
-              {domains.map(domain => {
-                const s = (stats[domain] || []).reduce((a, d) => ({ sent: a.sent + (d.sent || 0), delivered: a.delivered + (d.delivered || 0), bounced: a.bounced + (d.bounced || 0) }), { sent: 0, delivered: 0, bounced: 0 });
-                const rate = s.sent > 0 ? (s.delivered / s.sent * 100).toFixed(1) : 0;
-                return (
-                  <tr key={domain} className="border-b border-gray-700 hover:bg-gray-700">
-                    <td className="p-2">{domain}</td><td className="text-right p-2">{s.sent.toLocaleString()}</td><td className="text-right p-2 text-green-400">{s.delivered.toLocaleString()}</td><td className="text-right p-2 text-red-400">{s.bounced.toLocaleString()}</td><td className="text-right p-2">{rate}%</td>
-                  </tr>
-                );
-              })}
+              {availableDomains.length === 0 ? (
+                <tr><td colSpan="5" className="p-4 text-center text-gray-500">No domains found</td></tr>
+              ) : (
+                availableDomains.map(domain => {
+                  const s = (stats[domain] || []).reduce((a, d) => ({ sent: a.sent + (d.sent || 0), delivered: a.delivered + (d.delivered || 0), bounced: a.bounced + (d.bounced || 0) }), { sent: 0, delivered: 0, bounced: 0 });
+                  const rate = s.sent > 0 ? (s.delivered / s.sent * 100).toFixed(1) : 0;
+                  return (
+                    <tr key={domain} className="border-b border-gray-700 hover:bg-gray-700">
+                      <td className="p-2">{domain}</td><td className="text-right p-2">{s.sent.toLocaleString()}</td><td className="text-right p-2 text-green-400">{s.delivered.toLocaleString()}</td><td className="text-right p-2 text-red-400">{s.bounced.toLocaleString()}</td><td className="text-right p-2">{rate}%</td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         )}
