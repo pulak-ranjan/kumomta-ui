@@ -1,307 +1,181 @@
-package core
+import React, { useState, useEffect } from 'react';
 
-import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"os"
-	"strings"
-	"time"
+export default function WebhooksPage() {
+  const [settings, setSettings] = useState({ webhook_url: '', webhook_enabled: false, bounce_alert_pct: 5 });
+  const [logs, setLogs] = useState([]);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
 
-	"github.com/pulak-ranjan/kumomta-ui/internal/models"
-	"github.com/pulak-ranjan/kumomta-ui/internal/store"
-)
+  const token = localStorage.getItem('kumoui_token');
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-// WebhookService handles sending notifications
-type WebhookService struct {
-	Store *store.Store
-}
+  useEffect(() => { fetchSettings(); fetchLogs(); }, []);
 
-func NewWebhookService(st *store.Store) *WebhookService {
-	return &WebhookService{Store: st}
-}
+  const fetchSettings = async () => {
+    try {
+      const res = await fetch('/api/webhooks/settings', { headers });
+      if (res.ok) setSettings(await res.json());
+    } catch (e) { console.error(e); }
+  };
 
-// --- Payload Structures (Slack/Discord) ---
+  const fetchLogs = async () => {
+    try {
+      const res = await fetch('/api/webhooks/logs', { headers });
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      const data = await res.json();
+      setLogs(Array.isArray(data) ? data : []);
+    } catch (e) { console.error(e); setLogs([]); }
+  };
 
-type SlackMessage struct {
-	Text        string       `json:"text,omitempty"`
-	Username    string       `json:"username,omitempty"`
-	IconEmoji   string       `json:"icon_emoji,omitempty"`
-	Attachments []Attachment `json:"attachments,omitempty"`
-}
+  const saveSettings = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await fetch('/api/webhooks/settings', { method: 'POST', headers, body: JSON.stringify(settings) });
+      if (res.ok) setMessage('✅ Settings saved!');
+      else setMessage('❌ Failed to save');
+    } catch (e) { setMessage('❌ Error: ' + e.message); }
+    setSaving(false);
+    setTimeout(() => setMessage(''), 3000);
+  };
 
-type Attachment struct {
-	Color  string  `json:"color"`
-	Title  string  `json:"title"`
-	Text   string  `json:"text"`
-	Fields []Field `json:"fields,omitempty"`
-	Footer string  `json:"footer,omitempty"`
-	Ts     int64   `json:"ts,omitempty"`
-}
+  const testWebhook = async () => {
+    if (!settings.webhook_url) { setMessage('❌ Enter webhook URL first'); return; }
+    setTesting(true);
+    try {
+      const res = await fetch('/api/webhooks/test', { method: 'POST', headers, body: JSON.stringify({ webhook_url: settings.webhook_url }) });
+      if (res.ok) { setMessage('✅ Test sent!'); fetchLogs(); }
+      else setMessage('❌ Test failed');
+    } catch (e) { setMessage('❌ Error: ' + e.message); }
+    setTesting(false);
+    setTimeout(() => setMessage(''), 3000);
+  };
 
-type Field struct {
-	Title string `json:"title"`
-	Value string `json:"value"`
-	Short bool   `json:"short"`
-}
+  // --- NEW TRIGGER FUNCTIONS ---
 
-type DiscordMessage struct {
-	Content  string         `json:"content,omitempty"`
-	Username string         `json:"username,omitempty"`
-	Embeds   []DiscordEmbed `json:"embeds,omitempty"`
-}
+  const checkBounces = async () => {
+    try {
+      await fetch('/api/webhooks/check-bounces', { method: 'POST', headers });
+      setMessage('✅ Bounce check triggered');
+      fetchLogs();
+    } catch (e) { setMessage('❌ Error: ' + e.message); }
+    setTimeout(() => setMessage(''), 3000);
+  };
 
-type DiscordEmbed struct {
-	Title       string         `json:"title"`
-	Description string         `json:"description"`
-	Color       int            `json:"color"`
-	Fields      []DiscordField `json:"fields,omitempty"`
-	Footer      *DiscordFooter `json:"footer,omitempty"`
-	Timestamp   string         `json:"timestamp,omitempty"`
-}
+  const checkBlacklists = async () => {
+    try {
+      await fetch('/api/system/check-blacklist', { method: 'POST', headers });
+      setMessage('✅ Blacklist check started (Check Discord/Slack)');
+    } catch (e) { setMessage('❌ Error: ' + e.message); }
+    setTimeout(() => setMessage(''), 3000);
+  };
 
-type DiscordField struct {
-	Name   string `json:"name"`
-	Value  string `json:"value"`
-	Inline bool   `json:"inline"`
-}
+  const runSecurityAudit = async () => {
+    try {
+      await fetch('/api/system/check-security', { method: 'POST', headers });
+      setMessage('✅ Security audit started (Check Discord/Slack)');
+    } catch (e) { setMessage('❌ Error: ' + e.message); }
+    setTimeout(() => setMessage(''), 3000);
+  };
 
-type DiscordFooter struct {
-	Text string `json:"text"`
-}
+  // -----------------------------
 
-// --- Helper Functions ---
+  const formatDate = (d) => d ? new Date(d).toLocaleString() : '-';
 
-func (ws *WebhookService) getSenderName() string {
-	settings, err := ws.Store.GetSettings()
-	if err == nil && settings != nil && settings.MainHostname != "" {
-		return settings.MainHostname
-	}
-	return "KumoMTA UI"
-}
+  return (
+    <div className="p-6 bg-gray-900 min-h-screen text-white">
+      <h1 className="text-2xl font-bold mb-6">🔔 Webhook Alerts</h1>
 
-// --- 1. Audit Logging (Task Modifications) ---
+      {message && <div className="mb-4 p-3 bg-gray-800 rounded">{message}</div>}
 
-func (ws *WebhookService) SendAuditLog(action, details, user string) error {
-	settings, err := ws.Store.GetSettings()
-	if err != nil || settings == nil || !settings.WebhookEnabled || settings.WebhookURL == "" {
-		return nil
-	}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-gray-800 p-6 rounded-lg">
+          <h2 className="text-lg font-semibold mb-4">Settings</h2>
+          <form onSubmit={saveSettings} className="space-y-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Webhook URL (Slack/Discord)</label>
+              <input type="url" value={settings.webhook_url} onChange={e => setSettings({...settings, webhook_url: e.target.value})}
+                placeholder="https://hooks.slack.com/..." className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2" />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Bounce Alert Threshold (%)</label>
+              <input type="number" min="1" max="100" value={settings.bounce_alert_pct} onChange={e => setSettings({...settings, bounce_alert_pct: +e.target.value})}
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2" />
+              <p className="text-xs text-gray-500 mt-1">Alert when bounce rate exceeds this percentage</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="checkbox" id="enabled" checked={settings.webhook_enabled} onChange={e => setSettings({...settings, webhook_enabled: e.target.checked})}
+                className="w-4 h-4 rounded" />
+              <label htmlFor="enabled">Enable webhook alerts</label>
+            </div>
+            <div className="flex gap-2">
+              <button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded disabled:opacity-50">
+                {saving ? 'Saving...' : '💾 Save'}
+              </button>
+              <button type="button" onClick={testWebhook} disabled={testing} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded disabled:opacity-50">
+                {testing ? 'Sending...' : '🧪 Test'}
+              </button>
+            </div>
+          </form>
+        </div>
 
-	isDiscord := strings.Contains(settings.WebhookURL, "discord.com")
-	senderName := ws.getSenderName()
+        <div className="bg-gray-800 p-6 rounded-lg">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-semibold">System Checks</h2>
+          </div>
+          <div className="space-y-3">
+            <button onClick={checkBounces} className="w-full bg-yellow-600 hover:bg-yellow-700 px-4 py-3 rounded text-left">
+              <div className="font-semibold">⚠️ Check Bounce Rates</div>
+              <div className="text-sm text-yellow-200">Analyze current traffic</div>
+            </button>
 
-	var payload []byte
-	if isDiscord {
-		msg := DiscordMessage{
-			Username: senderName,
-			Embeds: []DiscordEmbed{{
-				Title:       "🛠️ System Activity",
-				Description: fmt.Sprintf("**%s** performed action: %s", user, action),
-				Color:       10181046, // Purple
-				Fields: []DiscordField{
-					{Name: "Details", Value: details, Inline: false},
-				},
-				Footer:    &DiscordFooter{Text: "Audit Log"},
-				Timestamp: time.Now().Format(time.RFC3339),
-			}},
-		}
-		payload, _ = json.Marshal(msg)
-	} else {
-		msg := SlackMessage{
-			Username:  senderName,
-			IconEmoji: ":hammer_and_wrench:",
-			Attachments: []Attachment{{
-				Color: "#9b59b6",
-				Title: "🛠️ System Activity",
-				Text:  fmt.Sprintf("*%s* performed action: %s\n> %s", user, action, details),
-				Footer: "Audit Log",
-				Ts:     time.Now().Unix(),
-			}},
-		}
-		payload, _ = json.Marshal(msg)
-	}
+            <button onClick={checkBlacklists} className="w-full bg-red-600 hover:bg-red-700 px-4 py-3 rounded text-left">
+              <div className="font-semibold">🚫 Check IP Blacklists</div>
+              <div className="text-sm text-red-200">Scan Spamhaus/Barracuda RBLs</div>
+            </button>
 
-	return ws.send(settings.WebhookURL, payload, "audit_log")
-}
+            <button onClick={runSecurityAudit} className="w-full bg-purple-600 hover:bg-purple-700 px-4 py-3 rounded text-left">
+              <div className="font-semibold">🔐 Run Security Audit</div>
+              <div className="text-sm text-purple-200">Check permissions, ports, & keys</div>
+            </button>
 
-// --- 2. Blacklist Checker ---
+            <div className="bg-gray-700 p-4 rounded mt-4">
+              <h3 className="font-semibold mb-2">ℹ️ Automated Schedule</h3>
+              <ul className="text-sm text-gray-400 space-y-1">
+                <li>• <strong>Hourly:</strong> Bounce Checks, Blacklist Checks</li>
+                <li>• <strong>Daily:</strong> Traffic Summary, Security Audit</li>
+                <li>• <strong>On Change:</strong> Admin Audit Logs</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
 
-func (ws *WebhookService) CheckBlacklists() error {
-	ips, err := ws.Store.ListSystemIPs()
-	if err != nil {
-		return err
-	}
-
-	// Common RBLs
-	rbls := []string{
-		"zen.spamhaus.org",
-		"b.barracudacentral.org",
-		"bl.spamcop.net",
-	}
-
-	var issues []string
-
-	for _, ipObj := range ips {
-		ip := ipObj.Value
-		// Reverse IP logic: 1.2.3.4 -> 4.3.2.1
-		parts := strings.Split(ip, ".")
-		if len(parts) != 4 {
-			continue
-		}
-		reversedIP := fmt.Sprintf("%s.%s.%s.%s", parts[3], parts[2], parts[1], parts[0])
-
-		for _, rbl := range rbls {
-			lookup := fmt.Sprintf("%s.%s", reversedIP, rbl)
-			if result, err := net.LookupHost(lookup); err == nil && len(result) > 0 {
-				issues = append(issues, fmt.Sprintf("IP **%s** is listed on **%s**", ip, rbl))
-			}
-		}
-	}
-
-	if len(issues) > 0 {
-		return ws.sendAlert("🚫 Blacklist Alert", "One or more IPs are blacklisted!", issues, 15158332) // Red
-	}
-	return nil
-}
-
-// --- 3. Security Audit ---
-
-func (ws *WebhookService) RunSecurityAudit() error {
-	var risks []string
-
-	// 1. Check if DB file is world readable
-	dbPath := os.Getenv("DB_DIR")
-	if dbPath == "" {
-		dbPath = "/var/lib/kumomta-ui"
-	}
-	info, err := os.Stat(dbPath + "/panel.db")
-	if err == nil {
-		mode := info.Mode().Perm()
-		if mode&0004 != 0 { // Check 'others' read permission
-			risks = append(risks, "Database file is world-readable (chmod 600 required)")
-		}
-	}
-
-	// 2. Check if Debug/Dev mode might be exposed (simple check on port 8000 if used)
-	if conn, err := net.DialTimeout("tcp", "0.0.0.0:8000", 1*time.Second); err == nil {
-		conn.Close()
-		risks = append(risks, "Port 8000 (HTTP) appears open publicly")
-	}
-
-	// 3. Check for default/weak settings (Example logic)
-	settings, _ := ws.Store.GetSettings()
-	if settings != nil && settings.AIAPIKey == "" {
-		risks = append(risks, "AI API Key is missing (AI features disabled)")
-	}
-
-	if len(risks) > 0 {
-		return ws.sendAlert("🔐 Security Alert", "Potential security issues detected", risks, 15105570) // Orange
-	}
-	return nil
-}
-
-// --- 4. Daily Summary (Existing logic refactored) ---
-
-func (ws *WebhookService) SendDailySummary(stats map[string][]models.EmailStats) error {
-    // This function can remain as defined in your previous files, 
-    // or reused if you already have it. 
-    // Just ensure it's exported so main.go can call it.
-    // (Implementation omitted for brevity as it was in the original upload, but ensures it uses ws.send)
-    return nil // Placeholder for existing logic
-}
-
-// --- Internal Send Logic ---
-
-func (ws *WebhookService) sendAlert(title, desc string, items []string, color int) error {
-	settings, err := ws.Store.GetSettings()
-	if err != nil || settings == nil || !settings.WebhookEnabled || settings.WebhookURL == "" {
-		return nil
-	}
-
-	isDiscord := strings.Contains(settings.WebhookURL, "discord.com")
-	senderName := ws.getSenderName()
-	
-	itemList := strings.Join(items, "\n• ")
-	if len(items) > 0 {
-		itemList = "• " + itemList
-	}
-
-	var payload []byte
-
-	if isDiscord {
-		msg := DiscordMessage{
-			Username: senderName,
-			Embeds: []DiscordEmbed{{
-				Title:       title,
-				Description: desc,
-				Color:       color,
-				Fields: []DiscordField{
-					{Name: "Findings", Value: itemList, Inline: false},
-				},
-				Footer:    &DiscordFooter{Text: "Automated Check"},
-				Timestamp: time.Now().Format(time.RFC3339),
-			}},
-		}
-		payload, _ = json.Marshal(msg)
-	} else {
-		// Slack
-		hexColor := fmt.Sprintf("#%06x", color)
-		msg := SlackMessage{
-			Username:  senderName,
-			IconEmoji: ":warning:",
-			Attachments: []Attachment{{
-				Color: hexColor,
-				Title: title,
-				Text:  fmt.Sprintf("%s\n\n%s", desc, itemList),
-				Footer: "Automated Check",
-				Ts:     time.Now().Unix(),
-			}},
-		}
-		payload, _ = json.Marshal(msg)
-	}
-
-	return ws.send(settings.WebhookURL, payload, "system_alert")
-}
-
-func (ws *WebhookService) send(url string, payload []byte, eventType string) error {
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		ws.logWebhook(eventType, string(payload), 0, err.Error())
-		return err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	ws.logWebhook(eventType, string(payload), resp.StatusCode, string(body))
-
-	return nil
-}
-
-func (ws *WebhookService) logWebhook(eventType, payload string, status int, response string) {
-	log := &models.WebhookLog{
-		EventType: eventType,
-		Payload:   payload,
-		Status:    status,
-		Response:  response,
-		CreatedAt: time.Now(),
-	}
-	ws.Store.CreateWebhookLog(log)
-}
-
-// CheckBounceRates (Existing Logic Wrapper)
-func (ws *WebhookService) CheckBounceRates() error {
-    // Call existing logic
-    // Implementation should be similar to previous turn's logic
-    return nil 
+      <div className="mt-6 bg-gray-800 p-6 rounded-lg">
+        <h2 className="text-lg font-semibold mb-4">📜 Recent Webhook Activity</h2>
+        {logs.length === 0 ? <p className="text-gray-400">No webhook activity yet</p> : (
+          <table className="w-full text-sm">
+            <thead><tr className="text-gray-400 border-b border-gray-700">
+              <th className="text-left p-2">Time</th><th className="text-left p-2">Event</th><th className="text-left p-2">Status</th><th className="text-left p-2">Response</th>
+            </tr></thead>
+            <tbody>
+              {logs.map((log, i) => (
+                <tr key={i} className="border-b border-gray-700">
+                  <td className="p-2 text-gray-400">{formatDate(log.created_at)}</td>
+                  <td className="p-2">{log.event_type}</td>
+                  <td className="p-2">
+                    <span className={`px-2 py-1 rounded text-xs ${log.status >= 200 && log.status < 300 ? 'bg-green-600' : 'bg-red-600'}`}>
+                      {log.status}
+                    </span>
+                  </td>
+                  <td className="p-2 text-gray-400 text-xs truncate max-w-xs">{log.response}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
 }
