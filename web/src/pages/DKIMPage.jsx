@@ -1,18 +1,24 @@
 import React, { useEffect, useState } from "react";
-import { listDKIMRecords, generateDKIM } from "../api";
+import { listDKIMRecords, generateDKIM, listDomains } from "../api";
 
 export default function DKIMPage() {
   const [records, setRecords] = useState([]);
+  const [domains, setDomains] = useState([]);
+  const [selectedDomain, setSelectedDomain] = useState("");
   const [msg, setMsg] = useState("");
   const [form, setForm] = useState({ domain: "", local_part: "" });
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
     try {
-      const recs = await listDKIMRecords();
-      setRecords(recs);
+      const [recs, doms] = await Promise.all([
+        listDKIMRecords(),
+        listDomains()
+      ]);
+      setRecords(Array.isArray(recs) ? recs : []);
+      setDomains(Array.isArray(doms) ? doms : []);
     } catch (err) {
-      setMsg(err.message || "Failed to load DKIM records");
+      setMsg(err.message || "Failed to load data");
     }
   };
 
@@ -51,47 +57,74 @@ export default function DKIMPage() {
     }
   };
 
+  const filteredRecords = selectedDomain 
+    ? records.filter(r => r.domain === selectedDomain)
+    : records;
+
   return (
     <div className="space-y-4 text-sm">
       <h2 className="text-lg font-semibold">DKIM</h2>
-      <form onSubmit={onGenerate} className="flex flex-wrap gap-2 items-end">
-        <div>
-          <label className="block text-slate-300 mb-1">Domain</label>
-          <input
-            name="domain"
-            value={form.domain}
-            onChange={onChange}
-            className="px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500 text-sm"
-            placeholder="example.com"
-            required
-          />
-        </div>
-        <div>
-          <label className="block text-slate-300 mb-1">Local Part (optional)</label>
-          <input
-            name="local_part"
-            value={form.local_part}
-            onChange={onChange}
-            className="px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500 text-sm"
-            placeholder="editor (or leave blank = all)"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={busy}
-          className="px-3 py-2 rounded-md bg-sky-500 hover:bg-sky-600 text-xs"
-        >
-          {busy ? "Working..." : "Generate DKIM"}
-        </button>
-      </form>
+      
+      {/* Generate Form */}
+      <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
+        <h3 className="text-xs uppercase text-slate-400 mb-2">Generate New Keys</h3>
+        <form onSubmit={onGenerate} className="flex flex-wrap gap-2 items-end">
+          <div>
+            <label className="block text-slate-300 mb-1 text-xs">Domain</label>
+            <input
+              name="domain"
+              value={form.domain}
+              onChange={onChange}
+              className="px-3 py-1.5 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500 text-xs w-48"
+              placeholder="example.com"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-slate-300 mb-1 text-xs">Local Part (optional)</label>
+            <input
+              name="local_part"
+              value={form.local_part}
+              onChange={onChange}
+              className="px-3 py-1.5 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500 text-xs w-48"
+              placeholder="editor (or leave blank = all)"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={busy}
+            className="px-3 py-1.5 rounded-md bg-sky-500 hover:bg-sky-600 text-xs text-white"
+          >
+            {busy ? "Working..." : "Generate"}
+          </button>
+        </form>
+      </div>
+
       {msg && <div className="text-xs text-slate-300">{msg}</div>}
+
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold">DNS Records</h3>
-        {records.length === 0 ? (
-          <div className="text-xs text-slate-500">No DKIM records found.</div>
+        <div className="flex justify-between items-center">
+          <h3 className="text-sm font-semibold">DNS Records</h3>
+          {/* Domain Filter */}
+          <select 
+            value={selectedDomain}
+            onChange={(e) => setSelectedDomain(e.target.value)}
+            className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs outline-none"
+          >
+            <option value="">Show All Domains</option>
+            {domains.map(d => (
+              <option key={d.id} value={d.name}>{d.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {filteredRecords.length === 0 ? (
+          <div className="text-xs text-slate-500 p-4 text-center border border-dashed border-slate-800 rounded">
+            No DKIM records found {selectedDomain ? `for ${selectedDomain}` : ""}.
+          </div>
         ) : (
           <div className="space-y-2">
-            {records.map((r, idx) => {
+            {filteredRecords.map((r, idx) => {
               const fullLine = `${r.dns_name} 3600 IN TXT "${r.dns_value}"`;
               return (
                 <div
@@ -99,8 +132,8 @@ export default function DKIMPage() {
                   className="bg-slate-900 border border-slate-800 rounded-md p-2 text-[11px]"
                 >
                   <div className="flex justify-between items-center mb-1">
-                    <div className="text-slate-300">
-                      {r.domain} ({r.selector})
+                    <div className="text-slate-300 font-medium">
+                      {r.domain} <span className="text-slate-500">({r.selector})</span>
                     </div>
                     <div className="flex gap-1">
                       <button
@@ -126,13 +159,8 @@ export default function DKIMPage() {
                   <div className="text-slate-400">
                     Name: <code>{r.dns_name}</code>
                   </div>
-                  <div className="text-slate-400">
-                    Value:{" "}
-                    <code className="break-all">{r.dns_value}</code>
-                  </div>
-                  <div className="mt-1 text-slate-500">
-                    Full TXT:{" "}
-                    <code className="break-all">{fullLine}</code>
+                  <div className="text-slate-400 truncate">
+                    Value: <code className="break-all">{r.dns_value.substring(0, 100)}...</code>
                   </div>
                 </div>
               );
