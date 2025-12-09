@@ -7,6 +7,7 @@ export default function WebhooksPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
+  // FIX: Use correct token key
   const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -15,7 +16,7 @@ export default function WebhooksPage() {
   const fetchSettings = async () => {
     try {
       const res = await fetch('/api/webhooks/settings', { headers });
-      setSettings(await res.json());
+      if (res.ok) setSettings(await res.json());
     } catch (e) { console.error(e); }
   };
 
