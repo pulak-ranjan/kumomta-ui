@@ -96,9 +96,9 @@ func (s *Server) handleGenerateDKIM(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /api/dkim/records
+// GET /api/dkim
 // Returns DNS-ready DKIM TXT records for all domains/senders that have pub keys.
-func (s *Server) handleListDKIMRecords(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListDKIM(w http.ResponseWriter, r *http.Request) {
 	snap, err := core.LoadSnapshot(s.Store)
 	if err != nil {
 		s.Store.LogError(err)
