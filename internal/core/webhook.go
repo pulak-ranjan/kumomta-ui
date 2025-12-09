@@ -47,18 +47,18 @@ type Field struct {
 
 // DiscordMessage represents a Discord webhook payload
 type DiscordMessage struct {
-	Content string         `json:"content,omitempty"`
-	Username string        `json:"username,omitempty"`
-	Embeds  []DiscordEmbed `json:"embeds,omitempty"`
+	Content  string         `json:"content,omitempty"`
+	Username string         `json:"username,omitempty"`
+	Embeds   []DiscordEmbed `json:"embeds,omitempty"`
 }
 
 type DiscordEmbed struct {
-	Title       string        `json:"title"`
-	Description string        `json:"description"`
-	Color       int           `json:"color"`
+	Title       string         `json:"title"`
+	Description string         `json:"description"`
+	Color       int            `json:"color"`
 	Fields      []DiscordField `json:"fields,omitempty"`
 	Footer      *DiscordFooter `json:"footer,omitempty"`
-	Timestamp   string        `json:"timestamp,omitempty"`
+	Timestamp   string         `json:"timestamp,omitempty"`
 }
 
 type DiscordField struct {
@@ -69,6 +69,15 @@ type DiscordField struct {
 
 type DiscordFooter struct {
 	Text string `json:"text"`
+}
+
+// getSenderName helper to use hostname or fallback
+func (ws *WebhookService) getSenderName() string {
+	settings, err := ws.Store.GetSettings()
+	if err == nil && settings != nil && settings.MainHostname != "" {
+		return settings.MainHostname
+	}
+	return "KumoMTA UI"
 }
 
 // SendBounceAlert sends an alert when bounce rate is high
@@ -84,13 +93,17 @@ func (ws *WebhookService) SendBounceAlert(domain string, bounceRate float64, sen
 	}
 
 	isDiscord := strings.Contains(settings.WebhookURL, "discord.com")
+	senderName := settings.MainHostname
+	if senderName == "" {
+		senderName = "KumoMTA Alert"
+	}
 
 	var payload []byte
 	var eventType = "bounce_alert"
 
 	if isDiscord {
 		msg := DiscordMessage{
-			Username: "KumoMTA Alert",
+			Username: senderName,
 			Embeds: []DiscordEmbed{
 				{
 					Title:       "⚠️ High Bounce Rate Alert",
@@ -110,7 +123,7 @@ func (ws *WebhookService) SendBounceAlert(domain string, bounceRate float64, sen
 	} else {
 		// Slack format
 		msg := SlackMessage{
-			Username:  "KumoMTA Alert",
+			Username:  senderName,
 			IconEmoji: ":warning:",
 			Attachments: []Attachment{
 				{
@@ -141,6 +154,10 @@ func (ws *WebhookService) SendDailySummary(stats map[string]DayStats) error {
 	}
 
 	isDiscord := strings.Contains(settings.WebhookURL, "discord.com")
+	senderName := settings.MainHostname
+	if senderName == "" {
+		senderName = "KumoMTA Report"
+	}
 
 	totalSent := int64(0)
 	totalDelivered := int64(0)
@@ -162,7 +179,7 @@ func (ws *WebhookService) SendDailySummary(stats map[string]DayStats) error {
 
 	if isDiscord {
 		msg := DiscordMessage{
-			Username: "KumoMTA Report",
+			Username: senderName,
 			Embeds: []DiscordEmbed{
 				{
 					Title:       "📊 Daily Sending Summary",
@@ -183,7 +200,7 @@ func (ws *WebhookService) SendDailySummary(stats map[string]DayStats) error {
 		payload, _ = json.Marshal(msg)
 	} else {
 		msg := SlackMessage{
-			Username:  "KumoMTA Report",
+			Username:  senderName,
 			IconEmoji: ":bar_chart:",
 			Attachments: []Attachment{
 				{
@@ -210,12 +227,15 @@ func (ws *WebhookService) SendDailySummary(stats map[string]DayStats) error {
 // SendTestWebhook sends a test message
 func (ws *WebhookService) SendTestWebhook(webhookURL string) error {
 	isDiscord := strings.Contains(webhookURL, "discord.com")
+	
+	// Fetch hostname for test message
+	senderName := ws.getSenderName()
 
 	var payload []byte
 
 	if isDiscord {
 		msg := DiscordMessage{
-			Username: "KumoMTA Test",
+			Username: senderName,
 			Embeds: []DiscordEmbed{
 				{
 					Title:       "✅ Webhook Test Successful",
@@ -229,7 +249,7 @@ func (ws *WebhookService) SendTestWebhook(webhookURL string) error {
 		payload, _ = json.Marshal(msg)
 	} else {
 		msg := SlackMessage{
-			Username:  "KumoMTA Test",
+			Username:  senderName,
 			IconEmoji: ":white_check_mark:",
 			Text:      "✅ Webhook Test Successful! Your KumoMTA UI webhook is configured correctly.",
 		}
