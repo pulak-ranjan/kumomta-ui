@@ -5,12 +5,14 @@ import {
   deleteDomain,
   saveSender,
   deleteSender,
-  getSettings
+  getSettings,
+  getSystemIPs
 } from "../api";
 
 export default function Domains() {
   const [domains, setDomains] = useState([]);
   const [settings, setSettings] = useState(null);
+  const [systemIPs, setSystemIPs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [editingDomain, setEditingDomain] = useState(null);
@@ -27,12 +29,16 @@ export default function Domains() {
     setLoading(true);
     setMsg("");
     try {
-      const [d, s] = await Promise.all([listDomains(), getSettings()]);
-      // Ensure domains is always an array (handle null/undefined from API)
+      const [d, s, ips] = await Promise.all([
+        listDomains(),
+        getSettings(),
+        getSystemIPs()
+      ]);
       setDomains(Array.isArray(d) ? d : []);
       setSettings(s || null);
+      setSystemIPs(Array.isArray(ips) ? ips : []);
     } catch (err) {
-      setMsg(err.message || "Failed to load domains/settings");
+      setMsg(err.message || "Failed to load data");
       setDomains([]);
     } finally {
       setLoading(false);
@@ -112,6 +118,8 @@ export default function Domains() {
         smtp_password: ""
       });
       await load();
+      setMsg("Sender saved! (DKIM & Bounce created if new)");
+      setTimeout(() => setMsg(""), 4000);
     } catch (err) {
       setMsg(err.message || "Failed to save sender");
     }
@@ -139,7 +147,23 @@ export default function Domains() {
   };
 
   const dnsHelpers = (d) => {
-    const ip = settings?.main_server_ip || "<SERVER_IP>";
+    const mainIp = settings?.main_server_ip || "<SERVER_IP>";
+
+    // Collect all unique IPs from senders + main IP
+    const ips = new Set();
+    if (d.senders && d.senders.length > 0) {
+      d.senders.forEach((s) => {
+        if (s.ip) ips.add(s.ip);
+      });
+    }
+    ips.add(mainIp);
+
+    // Build SPF value
+    const ipParts = Array.from(ips)
+      .map((ip) => `ip4:${ip}`)
+      .join(" ");
+    const spfValue = `v=spf1 ${ipParts} ~all`;
+
     const root = d.name || "<domain>";
     const mailHost = d.mail_host || `mail.${root}`;
     const bounceHost = d.bounce_host || `bounce.${root}`;
@@ -147,24 +171,23 @@ export default function Domains() {
     return [
       {
         label: "A for mail host",
-        value: `${mailHost} 3600 IN A ${ip}`
+        value: `${mailHost} 3600 IN A ${mainIp}`
       },
       {
         label: "A for bounce host",
-        value: `${bounceHost} 3600 IN A ${ip}`
+        value: `${bounceHost} 3600 IN A ${mainIp}`
       },
       {
         label: "MX to mail host",
         value: `${root} 3600 IN MX 10 ${mailHost}.`
       },
       {
-        label: "SPF (basic)",
-        value: `${root} 3600 IN TXT "v=spf1 ip4:${ip} ~all"`
+        label: "SPF (Includes Sender IPs)",
+        value: `${root} 3600 IN TXT "${spfValue}"`
       }
     ];
   };
 
-  // Helper to safely get senders array
   const getSenders = (domain) => {
     return Array.isArray(domain.senders) ? domain.senders : [];
   };
@@ -236,9 +259,7 @@ export default function Domains() {
                     >
                       <div className="text-[11px] text-slate-300 pr-1">
                         <div className="text-slate-400">{rec.label}</div>
-                        <div className="font-mono break-all">
-                          {rec.value}
-                        </div>
+                        <div className="font-mono break-all">{rec.value}</div>
                       </div>
                       <button
                         onClick={() => copy(rec.value)}
@@ -328,7 +349,10 @@ export default function Domains() {
                   className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
                   value={editingDomain.mail_host || ""}
                   onChange={(e) =>
-                    setEditingDomain((d) => ({ ...d, mail_host: e.target.value }))
+                    setEditingDomain((d) => ({
+                      ...d,
+                      mail_host: e.target.value
+                    }))
                   }
                 />
               </div>
@@ -338,7 +362,10 @@ export default function Domains() {
                   className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
                   value={editingDomain.bounce_host || ""}
                   onChange={(e) =>
-                    setEditingDomain((d) => ({ ...d, bounce_host: e.target.value }))
+                    setEditingDomain((d) => ({
+                      ...d,
+                      bounce_host: e.target.value
+                    }))
                   }
                 />
               </div>
@@ -393,24 +420,49 @@ export default function Domains() {
                 />
               </div>
               <div>
-                <label className="block text-slate-300 mb-1">IP</label>
-                <input
-                  value={senderForm.ip}
-                  onChange={(e) =>
-                    setSenderForm((s) => ({ ...s, ip: e.target.value }))
-                  }
-                  placeholder="51.x.x.x"
-                  className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
-                />
+                <label className="block text-slate-300 mb-1">IP Address</label>
+                {systemIPs.length > 0 ? (
+                  <select
+                    value={senderForm.ip}
+                    onChange={(e) =>
+                      setSenderForm((s) => ({ ...s, ip: e.target.value }))
+                    }
+                    className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
+                  >
+                    <option value="">-- Select Server IP --</option>
+                    {systemIPs.map((ip) => (
+                      <option key={ip} value={ip}>
+                        {ip}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={senderForm.ip}
+                    onChange={(e) =>
+                      setSenderForm((s) => ({ ...s, ip: e.target.value }))
+                    }
+                    placeholder="No IPs detected, type manually..."
+                    className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
+                  />
+                )}
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Select the interface IP this sender will use.
+                </p>
               </div>
               <div>
-                <label className="block text-slate-300 mb-1">SMTP Password</label>
+                <label className="block text-slate-300 mb-1">
+                  SMTP Password
+                </label>
                 <input
                   value={senderForm.smtp_password}
                   onChange={(e) =>
-                    setSenderForm((s) => ({ ...s, smtp_password: e.target.value }))
+                    setSenderForm((s) => ({
+                      ...s,
+                      smtp_password: e.target.value
+                    }))
                   }
-                  placeholder="Mwin11@2025 or custom"
+                  placeholder="Secret123"
                   className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
                   type="password"
                 />
@@ -436,7 +488,7 @@ export default function Domains() {
                   type="submit"
                   className="px-3 py-1 rounded bg-sky-500 hover:bg-sky-600"
                 >
-                  Save
+                  Save & Auto-Create
                 </button>
               </div>
             </form>
