@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../AuthContext";
 import { useNavigate } from "react-router-dom";
+import { Mail, Lock, Key, ArrowRight, Loader2, ShieldCheck, UserPlus, LogIn } from "lucide-react";
+import { cn } from "../lib/utils";
 
 export default function LoginRegister() {
   const { login, verify2FA, register, user } = useAuth();
@@ -23,10 +25,6 @@ export default function LoginRegister() {
     }
   }, [user, navigate]);
 
-  const origin = window.location.origin;
-  const panelUrl = origin;
-  const apiUrl = origin + "/api";
-
   const onSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -37,107 +35,80 @@ export default function LoginRegister() {
         await register(email, password);
         navigate("/");
       } else {
-        // Login Flow
         if (step === 1) {
           const res = await login(email, password);
           if (res && res.requires_2fa) {
-            // FIX: Handle 2FA requirement
             setTempToken(res.temp_token);
             setStep(2);
             setError("");
           } else {
-            // Success (no 2FA)
             navigate("/");
           }
         } else {
-          // Step 2: Verify TOTP
           await verify2FA(tempToken, totp);
           navigate("/");
         }
       }
     } catch (err) {
-      setError(err.message || "Failed");
+      setError(err.message || "Authentication failed");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl">
-        <h1 className="text-xl font-semibold mb-2 text-slate-50">
-          Kumo Control Panel
-        </h1>
-        <p className="text-[11px] text-slate-400 mb-3">
-          Panel URL: <span className="font-mono text-slate-200">{panelUrl}</span>
-          <br />
-          API URL: <span className="font-mono text-slate-200">{apiUrl}</span>
-        </p>
-        
-        <p className="text-xs text-slate-400 mb-4">
-          {step === 2 
-            ? "Enter your 2FA code to continue." 
-            : mode === "register"
-                ? "First-time setup: create the first admin user."
-                : "Login with your admin account."}
-        </p>
-
-        {step === 1 && (
-          <div className="flex gap-2 mb-4 text-xs">
-            <button
-              onClick={() => setMode("login")}
-              className={`flex-1 py-1 rounded-md transition-colors ${
-                mode === "login"
-                  ? "bg-sky-500 text-slate-50"
-                  : "bg-slate-800 text-slate-200 hover:bg-slate-700"
-              }`}
-            >
-              Login
-            </button>
-            <button
-              onClick={() => setMode("register")}
-              className={`flex-1 py-1 rounded-md transition-colors ${
-                mode === "register"
-                  ? "bg-sky-500 text-slate-50"
-                  : "bg-slate-800 text-slate-200 hover:bg-slate-700"
-              }`}
-            >
-              First-time Setup
-            </button>
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-lg p-8 space-y-6">
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 text-primary mb-2">
+            {step === 2 ? <ShieldCheck className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
           </div>
-        )}
+          <h1 className="text-2xl font-bold tracking-tight">
+            {step === 2 ? "Two-Factor Auth" : "KumoMTA UI"}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            {step === 2 
+              ? "Enter the code from your authenticator app" 
+              : mode === "register" 
+                ? "Create your admin account" 
+                : "Enter your credentials to continue"}
+          </p>
+        </div>
 
-        <form onSubmit={onSubmit} className="space-y-3 text-sm">
+        <form onSubmit={onSubmit} className="space-y-4">
           {step === 1 ? (
             <>
-              <div>
-                <label className="block text-slate-300 mb-1">Email</label>
-                <input
-                  type="email"
-                  className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 text-slate-50 text-sm outline-none focus:border-sky-500 transition-colors"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="block text-slate-300 mb-1">Password</label>
-                <input
-                  type="password"
-                  className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 text-slate-50 text-sm outline-none focus:border-sky-500 transition-colors"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+              <div className="space-y-2">
+                <div className="relative">
+                  <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                  <input
+                    type="email"
+                    placeholder="name@example.com"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 pl-9 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    autoFocus
+                  />
+                </div>
+                <div className="relative">
+                  <Key className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 pl-9 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                </div>
               </div>
             </>
           ) : (
-            <div>
-              <label className="block text-slate-300 mb-1">Authenticator Code</label>
+            <div className="space-y-2">
               <input
                 type="text"
-                className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 text-slate-50 text-center text-xl tracking-widest outline-none focus:border-sky-500 transition-colors"
+                className="flex h-12 w-full text-center text-2xl tracking-[0.5em] font-mono rounded-md border border-input bg-background px-3 py-2 text-foreground ring-offset-background placeholder:text-muted-foreground/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 value={totp}
                 onChange={(e) => setTotp(e.target.value)}
                 placeholder="000000"
@@ -148,37 +119,76 @@ export default function LoginRegister() {
             </div>
           )}
 
-          {error && <div className="text-xs text-red-400">{error}</div>}
-          
+          {error && (
+            <div className="p-3 rounded-md bg-destructive/15 text-destructive text-sm font-medium text-center">
+              {error}
+            </div>
+          )}
+
           <button
             type="submit"
             disabled={busy}
-            className="w-full mt-2 py-2 rounded-md bg-sky-500 hover:bg-sky-600 text-sm font-medium text-slate-50 transition-colors disabled:opacity-60"
+            className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 w-full"
           >
-            {busy 
-              ? "Working..." 
-              : step === 2 
-                ? "Verify Code" 
-                : mode === "register" 
-                    ? "Create Admin" 
-                    : "Login"}
+            {busy ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : step === 2 ? (
+              "Verify Code"
+            ) : mode === "register" ? (
+              <span className="flex items-center">Create Account <ArrowRight className="ml-2 h-4 w-4" /></span>
+            ) : (
+              <span className="flex items-center">Sign In <ArrowRight className="ml-2 h-4 w-4" /></span>
+            )}
           </button>
-          
-          {step === 2 && (
-             <button
-                type="button"
-                onClick={() => { setStep(1); setPassword(""); setTempToken(""); }}
-                className="w-full text-xs text-slate-500 hover:text-slate-300"
-             >
-                Back to Login
-             </button>
-          )}
         </form>
 
         {step === 1 && (
-            <p className="mt-4 text-[11px] text-slate-500">
-            After installation, open <span className="font-mono">{panelUrl}</span> in your browser and use <b>First-time Setup</b> to create the admin.
-            </p>
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-card px-2 text-muted-foreground">Or</span>
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="grid grid-cols-2 gap-4">
+            <button
+              type="button"
+              onClick={() => setMode("login")}
+              className={cn(
+                "inline-flex items-center justify-center rounded-md text-sm font-medium h-9 px-4 py-2 transition-colors",
+                mode === "login" 
+                  ? "bg-secondary text-secondary-foreground shadow-sm" 
+                  : "ghost hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <LogIn className="mr-2 h-4 w-4" /> Login
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("register")}
+              className={cn(
+                "inline-flex items-center justify-center rounded-md text-sm font-medium h-9 px-4 py-2 transition-colors",
+                mode === "register" 
+                  ? "bg-secondary text-secondary-foreground shadow-sm" 
+                  : "ghost hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <UserPlus className="mr-2 h-4 w-4" /> Register
+            </button>
+          </div>
+        )}
+
+        {step === 2 && (
+          <button
+            onClick={() => { setStep(1); setPassword(""); setTempToken(""); }}
+            className="w-full text-sm text-muted-foreground hover:text-foreground text-center"
+          >
+            Back to Login
+          </button>
         )}
       </div>
     </div>
