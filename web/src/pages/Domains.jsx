@@ -325,7 +325,6 @@ export default function Domains() {
                           <div className="flex items-center gap-2">
                             <span>{s.email || "-"}</span>
                             
-                            {/* DKIM Badge */}
                             {s.has_dkim ? (
                                 <span className="bg-green-900/50 text-green-300 px-1.5 py-0.5 rounded text-[10px] border border-green-800">
                                     DKIM
@@ -336,7 +335,6 @@ export default function Domains() {
                                 </span>
                             )}
 
-                            {/* Bounce Badge */}
                             {s.bounce_username ? (
                                 <span className="bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded text-[10px] border border-purple-800">
                                     Bounce: {s.bounce_username}
@@ -519,9 +517,9 @@ export default function Domains() {
                     className="w-full px-3 py-2 rounded-md bg-slate-950 border border-slate-700 outline-none focus:border-sky-500"
                   >
                     <option value="">-- Select Server IP --</option>
-                    {systemIPs.map((ip) => (
-                      <option key={ip} value={ip}>
-                        {ip}
+                    {systemIPs.map((ipObj) => (
+                      <option key={ipObj.id} value={ipObj.value}>
+                        {ipObj.value} ({ipObj.interface || 'unknown'})
                       </option>
                     ))}
                   </select>
