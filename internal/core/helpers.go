@@ -2,11 +2,6 @@ package core
 
 import (
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"net"
 	"os"
@@ -21,122 +16,8 @@ import (
 )
 
 const (
-	DKIMDir      = "/opt/kumomta/etc/dkim"
-	SnapshotFile = "/opt/kumomta/etc/dkim/snapshot.json"
-	MaildirBase  = "/home"
+	MaildirBase = "/home"
 )
-
-// Snapshot represents DKIM keys configuration
-type Snapshot struct {
-	Keys map[string]map[string]DKIMKey `json:"keys"` // domain -> selector -> key
-}
-
-type DKIMKey struct {
-	PrivateKeyPath string `json:"private_key_path"`
-	PublicKey      string `json:"public_key"`
-	Selector       string `json:"selector"`
-	Domain         string `json:"domain"`
-}
-
-type DKIMDNSRecord struct {
-	Domain    string `json:"domain"`
-	Selector  string `json:"selector"`
-	DNSName   string `json:"dns_name"`
-	DNSValue  string `json:"dns_value"`
-	PublicKey string `json:"public_key"`
-}
-
-// LoadSnapshot loads DKIM snapshot
-func LoadSnapshot() (*Snapshot, error) {
-	data, err := os.ReadFile(SnapshotFile)
-	if err != nil {
-		// Return empty snapshot
-		return &Snapshot{Keys: make(map[string]map[string]DKIMKey)}, nil
-	}
-
-	var snap Snapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return &Snapshot{Keys: make(map[string]map[string]DKIMKey)}, nil
-	}
-
-	if snap.Keys == nil {
-		snap.Keys = make(map[string]map[string]DKIMKey)
-	}
-
-	return &snap, nil
-}
-
-func SaveSnapshot(snap *Snapshot) error {
-	os.MkdirAll(DKIMDir, 0755)
-	data, err := json.MarshalIndent(snap, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(SnapshotFile, data, 0644)
-}
-
-// GenerateDKIM creates a new DKIM keypair
-func GenerateDKIM(domain, selector string) error {
-	snap, _ := LoadSnapshot()
-
-	// Generate 2048-bit RSA key
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return fmt.Errorf("failed to generate key: %v", err)
-	}
-
-	// Save private key
-	domainDir := filepath.Join(DKIMDir, domain)
-	os.MkdirAll(domainDir, 0700)
-
-	privateKeyPath := filepath.Join(domainDir, selector+".key")
-	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
-	})
-	if err := os.WriteFile(privateKeyPath, privateKeyPEM, 0600); err != nil {
-		return fmt.Errorf("failed to save private key: %v", err)
-	}
-
-	// Extract public key for DNS
-	publicKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
-	if err != nil {
-		return fmt.Errorf("failed to marshal public key: %v", err)
-	}
-	publicKeyB64 := base64.StdEncoding.EncodeToString(publicKeyBytes)
-
-	// Update snapshot
-	if snap.Keys[domain] == nil {
-		snap.Keys[domain] = make(map[string]DKIMKey)
-	}
-	snap.Keys[domain][selector] = DKIMKey{
-		PrivateKeyPath: privateKeyPath,
-		PublicKey:      publicKeyB64,
-		Selector:       selector,
-		Domain:         domain,
-	}
-
-	return SaveSnapshot(snap)
-}
-
-// ListDKIMDNSRecords returns all DKIM DNS records
-func ListDKIMDNSRecords(snap *Snapshot) ([]DKIMDNSRecord, error) {
-	var records []DKIMDNSRecord
-
-	for domain, selectors := range snap.Keys {
-		for selector, key := range selectors {
-			records = append(records, DKIMDNSRecord{
-				Domain:    domain,
-				Selector:  selector,
-				DNSName:   fmt.Sprintf("%s._domainkey.%s", selector, domain),
-				DNSValue:  fmt.Sprintf("v=DKIM1; k=rsa; p=%s", key.PublicKey),
-				PublicKey: key.PublicKey,
-			})
-		}
-	}
-
-	return records, nil
-}
 
 // CreateBounceAccount creates a system user for bounce handling
 func CreateBounceAccount(username, domain string, st *store.Store) error {
