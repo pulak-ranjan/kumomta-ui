@@ -1,4 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import { 
+  RefreshCw, 
+  Trash2, 
+  Zap, 
+  Inbox, 
+  Clock, 
+  AlertCircle,
+  CheckCircle2,
+  Mail
+} from 'lucide-react';
+import { cn } from '../lib/utils';
 
 export default function QueuePage() {
   const [messages, setMessages] = useState([]);
@@ -6,7 +17,6 @@ export default function QueuePage() {
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState(100);
 
-  // FIX: Use correct token key
   const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -46,77 +56,132 @@ export default function QueuePage() {
     } catch (e) { console.error(e); }
   };
 
-  const formatDate = (d) => d ? new Date(d).toLocaleString() : '-';
+  const formatDate = (d) => d ? new Date(d).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
   const formatSize = (b) => b > 1024 ? `${(b/1024).toFixed(1)} KB` : `${b} B`;
 
   return (
-    <div className="p-6 bg-gray-900 min-h-screen text-white">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">📬 Email Queue</h1>
-        <div className="flex gap-4">
-          <select value={limit} onChange={e => setLimit(+e.target.value)} className="bg-gray-800 border border-gray-700 rounded px-3 py-2">
-            <option value={50}>50 messages</option><option value={100}>100 messages</option><option value={500}>500 messages</option><option value={1000}>1000 messages</option>
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Mail Queue</h1>
+          <p className="text-muted-foreground">Monitor and manage outbound messages.</p>
+        </div>
+        <div className="flex gap-2">
+          <select value={limit} onChange={e => setLimit(+e.target.value)} className="h-10 rounded-md border bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-ring">
+            <option value={50}>50 Items</option>
+            <option value={100}>100 Items</option>
+            <option value={500}>500 Items</option>
           </select>
-          <button onClick={fetchQueue} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">🔄 Refresh</button>
-          <button onClick={flushQueue} className="bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded">⚡ Flush Queue</button>
+          <button onClick={fetchQueue} className="flex items-center gap-2 h-10 px-4 rounded-md bg-secondary text-secondary-foreground hover:bg-secondary/80 text-sm font-medium transition-colors">
+            <RefreshCw className="w-4 h-4" /> Refresh
+          </button>
+          <button onClick={flushQueue} className="flex items-center gap-2 h-10 px-4 rounded-md bg-amber-600 text-white hover:bg-amber-700 text-sm font-medium transition-colors shadow-sm">
+            <Zap className="w-4 h-4" /> Flush Queue
+          </button>
         </div>
       </div>
 
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-gray-800 p-4 rounded-lg"><div className="text-gray-400 text-sm">Total Messages</div><div className="text-2xl font-bold">{stats.total || 0}</div></div>
-          <div className="bg-gray-800 p-4 rounded-lg"><div className="text-gray-400 text-sm">Queued</div><div className="text-2xl font-bold text-blue-400">{stats.queued || 0}</div></div>
-          <div className="bg-gray-800 p-4 rounded-lg"><div className="text-gray-400 text-sm">Deferred</div><div className="text-2xl font-bold text-yellow-400">{stats.deferred || 0}</div></div>
-          <div className="bg-gray-800 p-4 rounded-lg"><div className="text-gray-400 text-sm">Total Size</div><div className="text-2xl font-bold">{formatSize(stats.total_size || 0)}</div></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <QueueStat label="Total Messages" value={stats.total} icon={Inbox} />
+          <QueueStat label="Queued (Active)" value={stats.queued} icon={Mail} color="text-blue-500" />
+          <QueueStat label="Deferred (Retry)" value={stats.deferred} icon={Clock} color="text-amber-500" />
+          <QueueStat label="Total Size" value={formatSize(stats.total_size)} icon={AlertCircle} />
         </div>
       )}
 
-      <div className="bg-gray-800 rounded-lg overflow-hidden">
-        {loading ? <p className="p-4">Loading...</p> : messages.length === 0 ? (
-          <div className="p-8 text-center text-gray-400">
-            <div className="text-4xl mb-2">✅</div>
-            <p>Queue is empty - all messages delivered!</p>
+      <div className="bg-card border rounded-xl overflow-hidden shadow-sm">
+        {loading ? (
+          <div className="p-12 text-center text-muted-foreground">Loading queue data...</div>
+        ) : messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center p-16 text-center">
+            <div className="p-4 bg-green-100 dark:bg-green-900/20 rounded-full mb-4">
+              <CheckCircle2 className="w-12 h-12 text-green-600 dark:text-green-400" />
+            </div>
+            <h3 className="text-xl font-semibold mb-1">Queue is Empty</h3>
+            <p className="text-muted-foreground">All messages have been delivered or processed.</p>
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead><tr className="bg-gray-700 text-gray-300">
-              <th className="text-left p-3">ID</th><th className="text-left p-3">Sender</th><th className="text-left p-3">Recipient</th><th className="text-left p-3">Status</th><th className="text-left p-3">Created</th><th className="text-left p-3">Attempts</th><th className="text-left p-3">Actions</th>
-            </tr></thead>
-            <tbody>
-              {messages.map(msg => (
-                <tr key={msg.id} className="border-b border-gray-700 hover:bg-gray-700">
-                  <td className="p-3 font-mono text-xs">{msg.id?.substring(0, 8)}...</td>
-                  <td className="p-3">{msg.sender || '-'}</td>
-                  <td className="p-3">{msg.recipient || '-'}</td>
-                  <td className="p-3">
-                    <span className={`px-2 py-1 rounded text-xs ${msg.status === 'deferred' ? 'bg-yellow-600' : 'bg-blue-600'}`}>
-                      {msg.status || 'queued'}
-                    </span>
-                  </td>
-                  <td className="p-3 text-gray-400">{formatDate(msg.created_at)}</td>
-                  <td className="p-3">{msg.attempts || 0}</td>
-                  <td className="p-3">
-                    <button onClick={() => deleteMessage(msg.id)} className="text-red-400 hover:text-red-300">🗑️</button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-muted/50 text-muted-foreground uppercase text-xs">
+                <tr>
+                  <th className="px-4 py-3 font-medium">ID</th>
+                  <th className="px-4 py-3 font-medium">Sender</th>
+                  <th className="px-4 py-3 font-medium">Recipient</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Created</th>
+                  <th className="px-4 py-3 font-medium text-center">Tries</th>
+                  <th className="px-4 py-3 font-medium text-right">Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {messages.map(msg => (
+                  <tr key={msg.id} className="hover:bg-muted/50 transition-colors group">
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground" title={msg.id}>
+                      {msg.id.substring(0, 8)}...
+                    </td>
+                    <td className="px-4 py-3 truncate max-w-[150px]" title={msg.sender}>{msg.sender || '-'}</td>
+                    <td className="px-4 py-3 truncate max-w-[150px]" title={msg.recipient}>{msg.recipient || '-'}</td>
+                    <td className="px-4 py-3">
+                      <span className={cn(
+                        "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize",
+                        msg.status === 'deferred' 
+                          ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400" 
+                          : "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
+                      )}>
+                        {msg.status || 'queued'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{formatDate(msg.created_at)}</td>
+                    <td className="px-4 py-3 text-center">{msg.attempts || 0}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button 
+                        onClick={() => deleteMessage(msg.id)} 
+                        className="p-1.5 hover:bg-destructive/10 text-muted-foreground hover:text-destructive rounded-md transition-colors opacity-0 group-hover:opacity-100"
+                        title="Delete Message"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
+      {/* Error Summary */}
       {messages.length > 0 && messages.some(m => m.error_msg) && (
-        <div className="mt-6 bg-gray-800 p-4 rounded-lg">
-          <h2 className="text-lg font-semibold mb-4">⚠️ Recent Errors</h2>
-          <div className="space-y-2">
-            {messages.filter(m => m.error_msg).slice(0, 5).map(m => (
-              <div key={m.id} className="bg-gray-700 p-3 rounded text-sm">
-                <span className="text-gray-400">{m.recipient}:</span> <span className="text-red-400">{m.error_msg}</span>
+        <div className="bg-card border rounded-xl p-6 shadow-sm">
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-destructive">
+            <AlertCircle className="w-5 h-5" /> Recent Deferral Reasons
+          </h3>
+          <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+            {messages.filter(m => m.error_msg).slice(0, 10).map((m, i) => (
+              <div key={i} className="text-sm p-3 bg-destructive/5 border border-destructive/10 rounded-md">
+                <div className="font-medium text-foreground mb-1">{m.recipient}</div>
+                <div className="text-destructive font-mono text-xs break-all">{m.error_msg}</div>
               </div>
             ))}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function QueueStat({ label, value, icon: Icon, color }) {
+  return (
+    <div className="bg-card border rounded-xl p-4 shadow-sm flex items-center justify-between">
+      <div>
+        <p className="text-sm font-medium text-muted-foreground">{label}</p>
+        <p className="text-2xl font-bold mt-1">{value || 0}</p>
+      </div>
+      <div className={cn("p-2 rounded-lg bg-secondary", color)}>
+        <Icon className="w-5 h-5" />
+      </div>
     </div>
   );
 }
