@@ -92,7 +92,8 @@ export default function IPsPage() {
                 key={i}
                 className="bg-slate-950 px-2 py-1 rounded text-xs font-mono text-slate-300"
               >
-                {ip}
+                {/* FIX: Render specific property, not object */}
+                {ip.value} 
               </div>
             ))}
           </div>
