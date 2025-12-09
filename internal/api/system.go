@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -66,8 +65,6 @@ func (s *Server) handleAddIPs(w http.ResponseWriter, r *http.Request) {
 		ip, ipnet, err := net.ParseCIDR(strings.TrimSpace(req.CIDR))
 		if err == nil {
 			for ip := ip.Mask(ipnet.Mask); ipnet.Contains(ip); inc(ip) {
-				// Filter standard lengths, skip network/broadcast implies
-				// user logic. We just add valid IPs.
 				newIPs = append(newIPs, models.SystemIP{
 					Value:   ip.String(),
 					Netmask: req.CIDR,
