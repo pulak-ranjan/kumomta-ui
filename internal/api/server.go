@@ -51,11 +51,11 @@ func (s *Server) Router() http.Handler {
 		r.Use(s.authMiddleware)
 
 		r.Get("/api/auth/me", s.handleMe)
-
+         
 		// Settings
 		r.Get("/api/settings", s.handleGetSettings)
 		r.Post("/api/settings", s.handleSaveSettings)
-
+        r.Get("/api/system/ips", s.handleGetSystemIPs)
 		// Config preview and apply
 		r.Get("/api/config/preview", s.handlePreviewConfig)
 		r.Post("/api/config/apply", s.handleApplyConfig)
