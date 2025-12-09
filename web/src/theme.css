@@ -1,0 +1,79 @@
+/* Add to your index.css or App.css */
+
+/* Light mode overrides */
+.light {
+  --bg-primary: #f3f4f6;
+  --bg-secondary: #ffffff;
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --border-color: #e5e7eb;
+}
+
+.light .bg-gray-900 {
+  background-color: #f3f4f6 !important;
+}
+
+.light .bg-gray-800 {
+  background-color: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.light .bg-gray-700 {
+  background-color: #f9fafb !important;
+}
+
+.light .text-white {
+  color: #111827 !important;
+}
+
+.light .text-gray-300 {
+  color: #4b5563 !important;
+}
+
+.light .text-gray-400 {
+  color: #6b7280 !important;
+}
+
+.light .border-gray-700 {
+  border-color: #e5e7eb !important;
+}
+
+.light .border-gray-600 {
+  border-color: #d1d5db !important;
+}
+
+.light input,
+.light select,
+.light textarea {
+  background-color: #f9fafb !important;
+  border-color: #d1d5db !important;
+  color: #111827 !important;
+}
+
+.light input::placeholder,
+.light textarea::placeholder {
+  color: #9ca3af !important;
+}
+
+/* Dark mode (default) */
+.dark {
+  --bg-primary: #111827;
+  --bg-secondary: #1f2937;
+  --text-primary: #f9fafb;
+  --text-secondary: #9ca3af;
+  --border-color: #374151;
+}
+
+/* Smooth transitions */
+* {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+/* Chart.js light mode */
+.light .recharts-text {
+  fill: #374151 !important;
+}
+
+.light .recharts-cartesian-grid line {
+  stroke: #e5e7eb !important;
+}
