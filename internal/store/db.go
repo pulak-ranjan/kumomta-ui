@@ -30,6 +30,8 @@ func NewStore(path string) (*Store, error) {
 		&models.AuthSession{},
 		&models.BounceAccount{},
 		&models.SystemIP{},
+		&models.EmailStats{},
+		&models.WebhookLog{},
 	); err != nil {
 		return nil, err
 	}
@@ -49,8 +51,7 @@ var ErrNotFound = gorm.ErrRecordNotFound
 // Auth Sessions (Multi-Device)
 // ----------------------
 
-// CreateSession creates a new token and ensures max 3 active sessions
-func (s *Store) CreateSession(adminID uint, token string, ip string, duration time.Duration) error {
+func (s *Store) CreateSession(adminID uint, token string, ip string, userAgent string, duration time.Duration) error {
 	// 1. Cleanup expired
 	s.DB.Where("expires_at < ?", time.Now()).Delete(&models.AuthSession{})
 
@@ -71,6 +72,7 @@ func (s *Store) CreateSession(adminID uint, token string, ip string, duration ti
 		Token:     token,
 		ExpiresAt: time.Now().Add(duration),
 		DeviceIP:  ip,
+		UserAgent: userAgent,
 	}
 	return s.DB.Create(&sess).Error
 }
@@ -89,6 +91,13 @@ func (s *Store) GetAdminBySessionToken(token string) (*models.AdminUser, error) 
 
 func (s *Store) DeleteSession(token string) error {
 	return s.DB.Where("token = ?", token).Delete(&models.AuthSession{}).Error
+}
+
+func (s *Store) ListSessionsByAdmin(adminID uint) ([]models.AuthSession, error) {
+	var sessions []models.AuthSession
+	err := s.DB.Where("admin_id = ? AND expires_at > ?", adminID, time.Now()).
+		Order("created_at desc").Find(&sessions).Error
+	return sessions, err
 }
 
 // ----------------------
@@ -228,6 +237,15 @@ func (s *Store) GetAdminByEmail(email string) (*models.AdminUser, error) {
 	return &u, nil
 }
 
+func (s *Store) GetAdminByID(id uint) (*models.AdminUser, error) {
+	var u models.AdminUser
+	err := s.DB.First(&u, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	return &u, err
+}
+
 func (s *Store) CreateAdmin(u *models.AdminUser) error {
 	return s.DB.Create(u).Error
 }
@@ -293,4 +311,80 @@ func (s *Store) CreateSystemIPs(ips []models.SystemIP) error {
 
 func (s *Store) DeleteSystemIP(id uint) error {
 	return s.DB.Delete(&models.SystemIP{}, id).Error
+}
+
+// ----------------------
+// Email Stats
+// ----------------------
+
+func (s *Store) UpsertEmailStats(stats *models.EmailStats) error {
+	// Try to find existing record for this domain+date
+	var existing models.EmailStats
+	date := stats.Date.Truncate(24 * time.Hour)
+
+	err := s.DB.Where("domain = ? AND date = ?", stats.Domain, date).First(&existing).Error
+	if err == nil {
+		// Update existing
+		existing.Sent += stats.Sent
+		existing.Delivered += stats.Delivered
+		existing.Bounced += stats.Bounced
+		existing.Deferred += stats.Deferred
+		existing.UpdatedAt = time.Now()
+		return s.DB.Save(&existing).Error
+	}
+
+	// Create new
+	stats.Date = date
+	stats.UpdatedAt = time.Now()
+	return s.DB.Create(stats).Error
+}
+
+func (s *Store) GetEmailStatsByDomain(domain string, days int) ([]models.EmailStats, error) {
+	var stats []models.EmailStats
+	since := time.Now().AddDate(0, 0, -days).Truncate(24 * time.Hour)
+
+	err := s.DB.Where("domain = ? AND date >= ?", domain, since).
+		Order("date asc").Find(&stats).Error
+	return stats, err
+}
+
+func (s *Store) GetEmailStatsAll(days int) ([]models.EmailStats, error) {
+	var stats []models.EmailStats
+	since := time.Now().AddDate(0, 0, -days).Truncate(24 * time.Hour)
+
+	err := s.DB.Where("date >= ?", since).Order("date asc").Find(&stats).Error
+	return stats, err
+}
+
+func (s *Store) GetTodayStats() ([]models.EmailStats, error) {
+	var stats []models.EmailStats
+	today := time.Now().Truncate(24 * time.Hour)
+	err := s.DB.Where("date = ?", today).Find(&stats).Error
+	return stats, err
+}
+
+func (s *Store) SetEmailStats(stats *models.EmailStats) error {
+	date := stats.Date.Truncate(24 * time.Hour)
+	
+	// Delete existing for this domain+date
+	s.DB.Where("domain = ? AND date = ?", stats.Domain, date).Delete(&models.EmailStats{})
+	
+	// Create new
+	stats.Date = date
+	stats.UpdatedAt = time.Now()
+	return s.DB.Create(stats).Error
+}
+
+// ----------------------
+// Webhook Logs
+// ----------------------
+
+func (s *Store) CreateWebhookLog(wl *models.WebhookLog) error {
+	return s.DB.Create(wl).Error
+}
+
+func (s *Store) ListWebhookLogs(limit int) ([]models.WebhookLog, error) {
+	var logs []models.WebhookLog
+	err := s.DB.Order("created_at desc").Limit(limit).Find(&logs).Error
+	return logs, err
 }
