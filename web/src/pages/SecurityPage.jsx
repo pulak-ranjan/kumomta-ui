@@ -13,7 +13,7 @@ export default function SecurityPage() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   useEffect(() => { fetchUser(); fetchSessions(); }, []);
