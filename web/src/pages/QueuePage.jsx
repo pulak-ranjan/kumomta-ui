@@ -6,7 +6,7 @@ export default function QueuePage() {
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState(100);
 
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}` };
 
   useEffect(() => { fetchQueue(); fetchStats(); }, [limit]);
