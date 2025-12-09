@@ -105,7 +105,8 @@ func (s *Server) handleGetAllDNS(w http.ResponseWriter, r *http.Request) {
 		mainIP = settings.MainServerIP
 	}
 
-	snap, _ := core.LoadSnapshot()
+	// FIX: Pass store to LoadSnapshot
+	snap, _ := core.LoadSnapshot(s.Store)
 	records := core.GenerateAllDNSRecords(domain, mainIP, snap)
 
 	writeJSON(w, http.StatusOK, records)
