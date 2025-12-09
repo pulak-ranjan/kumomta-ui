@@ -37,7 +37,7 @@ func (s *Server) handleGetSystemIPs(w http.ResponseWriter, r *http.Request) {
 				ip = v.IP
 			}
 
-			// Only support IPv4 for now, and skip loopback/link-local
+			// Only support IPv4 for now, and skip loopback
 			if ip != nil && ip.To4() != nil && !ip.IsLoopback() {
 				ips = append(ips, ip.String())
 			}
