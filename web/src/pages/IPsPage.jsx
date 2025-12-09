@@ -90,10 +90,10 @@ export default function IPsPage() {
             {ips.map((ip, i) => (
               <div
                 key={i}
-                className="bg-slate-950 px-2 py-1 rounded text-xs font-mono text-slate-300"
+                className="bg-slate-950 px-2 py-1 rounded text-xs font-mono text-slate-300 mb-1 flex justify-between items-center"
               >
-                {/* FIX: Render specific property, not object */}
-                {ip.value} 
+                <span>{ip.value}</span>
+                <span className="text-slate-500 text-[10px]">{ip.interface}</span>
               </div>
             ))}
           </div>
