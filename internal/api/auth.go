@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/mail"
 	"strings"
+	"time"
 	"unicode"
 
 	"golang.org/x/crypto/bcrypt"
@@ -14,9 +15,6 @@ import (
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
-
-// Token validity duration (7 days)
-const TokenValidityDuration = 7 * 24 * 3600 * 1000 * 1000 * 1000 // 7 days in nanoseconds... logic simplified below
 
 type authRequest struct {
 	Email    string `json:"email"`
@@ -100,10 +98,10 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// Create Session
 	token := generateToken()
 	ip := r.RemoteAddr
-	if strings.Contains(ip, ":") {
-		ip = strings.Split(ip, ":")[0]
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
 	}
-	
+
 	if err := s.Store.CreateSession(admin.ID, token, ip, 7*24*time.Hour); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create session"})
 		return
@@ -138,8 +136,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Create Session (Max 3 enforced in store)
 	token := generateToken()
 	ip := r.RemoteAddr
-	if strings.Contains(ip, ":") {
-		ip = strings.Split(ip, ":")[0]
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
 	}
 
 	if err := s.Store.CreateSession(admin.ID, token, ip, 7*24*time.Hour); err != nil {
