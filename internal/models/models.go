@@ -4,102 +4,106 @@ import "time"
 
 // Represents global application settings.
 type AppSettings struct {
-	ID uint `gorm:"primaryKey"`
+	ID uint `gorm:"primaryKey" json:"id"`
 
-	MainHostname string
-	MainServerIP string
-	MailWizzIP   string // optional relay IP
+	MainHostname string `json:"main_hostname"`
+	MainServerIP string `json:"main_server_ip"`
+	MailWizzIP   string `json:"mailwizz_ip"` // optional relay IP
 
-	AIProvider string // "openai", "deepseek"
-	AIAPIKey   string // encrypted or blank
+	AIProvider string `json:"ai_provider"` // "openai", "deepseek"
+	AIAPIKey   string `json:"ai_api_key"`  // encrypted or blank
 
 	// Webhook Settings
-	WebhookURL     string // Slack/Discord webhook URL
-	WebhookEnabled bool
-	BounceAlertPct float64 // Alert when bounce rate exceeds this %
+	WebhookURL     string  `json:"webhook_url"`
+	WebhookEnabled bool    `json:"webhook_enabled"`
+	BounceAlertPct float64 `json:"bounce_alert_pct"`
 }
 
 // A domain managed by the system
 type Domain struct {
-	ID   uint   `gorm:"primaryKey"`
-	Name string `gorm:"uniqueIndex"`
+	ID   uint   `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"uniqueIndex" json:"name"`
 
-	MailHost   string
-	BounceHost string
+	MailHost   string `json:"mail_host"`
+	BounceHost string `json:"bounce_host"`
 
 	// DMARC Settings
-	DMARCPolicy     string // none, quarantine, reject
-	DMARCRua        string // Aggregate report email
-	DMARCRuf        string // Forensic report email
-	DMARCPercentage int    // 0-100
+	DMARCPolicy     string `json:"dmarc_policy"`     // none, quarantine, reject
+	DMARCRua        string `json:"dmarc_rua"`        // Aggregate report email
+	DMARCRuf        string `json:"dmarc_ruf"`        // Forensic report email
+	DMARCPercentage int    `json:"dmarc_percentage"` // 0-100
 
-	Senders []Sender `gorm:"constraint:OnDelete:CASCADE"`
+	Senders []Sender `gorm:"constraint:OnDelete:CASCADE" json:"senders"`
 }
 
 // AdminUser represents a panel admin account
 type AdminUser struct {
-	ID           uint   `gorm:"primaryKey"`
-	Email        string `gorm:"uniqueIndex"`
-	PasswordHash string // bcrypt hash
+	ID           uint   `gorm:"primaryKey" json:"id"`
+	Email        string `gorm:"uniqueIndex" json:"email"`
+	PasswordHash string `json:"-"` // Never return hash
 
 	// 2FA Support
-	TwoFactorSecret  string // TOTP secret (encrypted)
-	TwoFactorEnabled bool
+	TwoFactorSecret  string `json:"-"`
+	TwoFactorEnabled bool   `json:"has_2fa"`
 
 	// User Preferences
-	Theme string // "dark", "light", "system"
+	Theme string `json:"theme"`
 }
 
 // Auth Sessions for multi-device support
 type AuthSession struct {
-	ID        uint      `gorm:"primaryKey"`
-	AdminID   uint      `gorm:"index"`
-	Token     string    `gorm:"uniqueIndex"`
-	ExpiresAt time.Time
-	CreatedAt time.Time
-	DeviceIP  string
-	UserAgent string // Browser/device info
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	AdminID   uint      `gorm:"index" json:"admin_id"`
+	Token     string    `gorm:"uniqueIndex" json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	DeviceIP  string    `json:"device_ip"`
+	UserAgent string    `json:"user_agent"`
 }
 
 // BounceAccount represents a system user for handling bounced emails
 type BounceAccount struct {
-	ID           uint   `gorm:"primaryKey"`
-	Username     string `gorm:"uniqueIndex"`
-	PasswordHash string
-	Domain       string
-	Notes        string
+	ID           uint   `gorm:"primaryKey" json:"id"`
+	Username     string `gorm:"uniqueIndex" json:"username"`
+	PasswordHash string `json:"-"`
+	Domain       string `json:"domain"`
+	Notes        string `json:"notes"`
 }
 
 // A sender identity associated with a domain
 type Sender struct {
-	ID       uint `gorm:"primaryKey"`
-	DomainID uint `gorm:"index"`
+	ID       uint `gorm:"primaryKey" json:"id"`
+	DomainID uint `gorm:"index" json:"domain_id"`
 
-	LocalPart    string
-	Email        string
-	IP           string // specific IP for this sender
-	SMTPPassword string
+	LocalPart    string `json:"local_part"`
+	Email        string `json:"email"`
+	IP           string `json:"ip"` // specific IP for this sender
+	SMTPPassword string `json:"smtp_password,omitempty"`
+	
+	// Virtual fields for UI convenience (populated manually if needed)
+	HasDKIM        bool   `gorm:"-" json:"has_dkim"`
+	BounceUsername string `gorm:"-" json:"bounce_username"`
 }
 
 // Inventory of IPs available on the server
 type SystemIP struct {
-	ID        uint      `gorm:"primaryKey"`
-	Value     string    `gorm:"uniqueIndex"` // IPv4 address
-	Netmask   string    // e.g. /24
-	Interface string    // e.g. eth0 (optional)
-	CreatedAt time.Time
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Value     string    `gorm:"uniqueIndex" json:"value"` // IPv4 address
+	Netmask   string    `json:"netmask"`                  // e.g. /24
+	Interface string    `json:"interface"`                // e.g. eth0 (optional)
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // EmailStats stores aggregated sending statistics
 type EmailStats struct {
-	ID        uint      `gorm:"primaryKey"`
-	Domain    string    `gorm:"index"`
-	Date      time.Time `gorm:"index"` // Date only (no time)
-	Sent      int64
-	Delivered int64
-	Bounced   int64
-	Deferred  int64
-	UpdatedAt time.Time
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Domain    string    `gorm:"index" json:"domain"`
+	Date      time.Time `gorm:"index" json:"date"` // Date only (no time)
+	Sent      int64     `json:"sent"`
+	Delivered int64     `json:"delivered"`
+	Bounced   int64     `json:"bounced"`
+	Deferred  int64     `json:"deferred"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // QueueMessage represents a message in the mail queue
@@ -119,10 +123,10 @@ type QueueMessage struct {
 
 // WebhookLog stores webhook delivery history
 type WebhookLog struct {
-	ID        uint      `gorm:"primaryKey"`
-	EventType string    // bounce_alert, daily_summary
-	Payload   string    // JSON payload sent
-	Status    int       // HTTP status code
-	Response  string    // Response body
-	CreatedAt time.Time
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	EventType string    `json:"event_type"` // bounce_alert, daily_summary
+	Payload   string    `json:"payload"`    // JSON payload sent
+	Status    int       `json:"status"`     // HTTP status code
+	Response  string    `json:"response"`   // Response body
+	CreatedAt time.Time `json:"created_at"`
 }
