@@ -35,8 +35,8 @@ type senderDTO struct {
 	Email          string `json:"email"`
 	IP             string `json:"ip"`
 	SMTPPassword   string `json:"smtp_password"`
-	HasDKIM        bool   `json:"has_dkim"`        // <--- NEW
-	BounceUsername string `json:"bounce_username"` // <--- NEW
+	HasDKIM        bool   `json:"has_dkim"`        
+	BounceUsername string `json:"bounce_username"` 
 }
 
 // Helper to generate a random password for bounce accounts
@@ -70,9 +70,6 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Pre-fetch all bounce accounts to map for O(1) lookup
-	// Map: "b-localpart" -> true (or strict matching logic)
-	// Actually, we need to find which bounce account matches the sender.
-	// Our convention is b-localpart. Let's build a map of usernames.
 	bounces, _ := s.Store.ListBounceAccounts()
 	bounceMap := make(map[string]bool)
 	for _, b := range bounces {
@@ -389,10 +386,6 @@ func (s *Server) handleSaveSender(w http.ResponseWriter, r *http.Request) {
 	if d != nil {
 		respDTO.HasDKIM = checkDKIMExists(d.Name, sdr.LocalPart)
 	}
-	// Check bounce simply by convention for update
-	bName := fmt.Sprintf("b-%s", sdr.LocalPart)
-	// Just return the convention if we assume it exists, but proper check is better
-	// For speed, let's just return the DTO. The list view will have the full map check.
 	
 	writeJSON(w, http.StatusOK, respDTO)
 }
