@@ -78,7 +78,10 @@ export function getDashboardStats() {
 }
 
 export function getAIInsights() {
-  return apiRequest("/dashboard/ai", { method: "POST" });
+  return apiRequest("/system/ai-analyze", { 
+    method: "POST", 
+    body: { type: "logs" } 
+  });
 }
 
 // Settings
@@ -96,7 +99,10 @@ export function listDomains() {
 }
 
 export function saveDomain(domain) {
-  return apiRequest("/domains", { method: "POST", body: domain });
+  // Use PUT for update (id exists), POST for create
+  const method = domain.id ? "PUT" : "POST";
+  const url = domain.id ? `/domains/${domain.id}` : "/domains";
+  return apiRequest(url, { method, body: domain });
 }
 
 export function deleteDomain(id) {
@@ -108,6 +114,10 @@ export function listSenders(domainID) {
 }
 
 export function saveSender(domainID, sender) {
+  // Use PUT for update, POST for create
+  if (sender.id) {
+    return apiRequest(`/senders/${sender.id}`, { method: "PUT", body: sender });
+  }
   return apiRequest(`/domains/${domainID}/senders`, {
     method: "POST",
     body: sender
@@ -143,7 +153,8 @@ export function importSenders(file) {
   const formData = new FormData();
   formData.append("file", file);
 
-  return fetch(`${API_BASE}/domains/import`, {
+  // FIX: Correct backend URL for import
+  return fetch(`${API_BASE}/import/csv`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${getToken()}`
