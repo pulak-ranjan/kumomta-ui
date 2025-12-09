@@ -33,10 +33,10 @@ func main() {
 
 	srv := api.NewServer(st)
 
-	addr := ":9000"
-	log.Printf("Kumo UI backend listening on %s\n", addr)
+	// FIX: Listen only on localhost to force traffic through Nginx (SSL)
+	addr := "127.0.0.1:9000"
+	log.Printf("Kumo UI backend listening on %s (localhost only)\n", addr)
 
-	// FIX: srv.Router is a field, not a method. Remove "()"
 	if err := http.ListenAndServe(addr, srv.Router); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
