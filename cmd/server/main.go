@@ -36,7 +36,8 @@ func main() {
 	addr := ":9000"
 	log.Printf("Kumo UI backend listening on %s\n", addr)
 
-	if err := http.ListenAndServe(addr, srv.Router()); err != nil {
+	// FIX: srv.Router is a field, not a method. Remove "()"
+	if err := http.ListenAndServe(addr, srv.Router); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }
