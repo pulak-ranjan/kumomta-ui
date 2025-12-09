@@ -7,6 +7,7 @@ import ConfigPage from "./pages/ConfigPage";
 import DKIMPage from "./pages/DKIMPage";
 import BouncePage from "./pages/BouncePage";
 import LogsPage from "./pages/LogsPage";
+import IPsPage from "./pages/IPsPage"; // <--- Import
 import LoginRegister from "./pages/LoginRegister";
 
 function AppShell() {
@@ -31,6 +32,8 @@ function AppShell() {
         return <Dashboard />;
       case "settings":
         return <Settings />;
+      case "ips":
+        return <IPsPage />; // <--- Route
       case "domains":
         return <Domains />;
       case "config":
@@ -50,9 +53,7 @@ function AppShell() {
     <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col">
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="font-semibold tracking-wide">
-            Kumo Control Panel
-          </div>
+          <div className="font-semibold tracking-wide">Kumo Control Panel</div>
           <div className="flex items-center gap-4 text-sm">
             <span className="text-slate-300">{user.email}</span>
             <button
@@ -63,10 +64,11 @@ function AppShell() {
             </button>
           </div>
         </div>
-        <nav className="max-w-6xl mx-auto px-4 pb-2 flex gap-2 text-sm">
+        <nav className="max-w-6xl mx-auto px-4 pb-2 flex gap-2 text-sm overflow-x-auto">
           {[
             ["dashboard", "Dashboard"],
             ["settings", "Settings"],
+            ["ips", "IP Manager"], // <--- Nav Item
             ["domains", "Domains & Senders"],
             ["config", "Config"],
             ["dkim", "DKIM"],
@@ -76,8 +78,10 @@ function AppShell() {
             <button
               key={key}
               onClick={() => setTab(key)}
-              className={`px-3 py-1 rounded-md ${
-                tab === key ? "bg-sky-500 text-slate-50" : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+              className={`px-3 py-1 rounded-md whitespace-nowrap ${
+                tab === key
+                  ? "bg-sky-500 text-slate-50"
+                  : "bg-slate-800 text-slate-200 hover:bg-slate-700"
               }`}
             >
               {label}
