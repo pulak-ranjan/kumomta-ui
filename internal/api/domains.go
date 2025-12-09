@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -11,9 +12,14 @@ import (
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
 
-// ----------------------
-// Domains
-// ----------------------
+// Helper to get current user email
+func (s *Server) getUser(r *http.Request) string {
+	admin := getAdminFromContext(r.Context())
+	if admin != nil {
+		return admin.Email
+	}
+	return "unknown"
+}
 
 // GET /api/domains
 func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +32,6 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 		domains = []models.Domain{}
 	}
 
-	// FIX: Populate virtual fields (DKIM check)
 	for i := range domains {
 		for j := range domains[i].Senders {
 			snd := &domains[i].Senders[j]
@@ -67,6 +72,9 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create domain"})
 		return
 	}
+
+	// AUDIT LOG
+	go s.WS.SendAuditLog("Create Domain", fmt.Sprintf("Domain: %s", d.Name), s.getUser(r))
 
 	writeJSON(w, http.StatusCreated, d)
 }
@@ -114,32 +122,21 @@ func (s *Server) handleUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if update.Name != "" {
-		domain.Name = update.Name
-	}
-	if update.MailHost != "" {
-		domain.MailHost = update.MailHost
-	}
-	if update.BounceHost != "" {
-		domain.BounceHost = update.BounceHost
-	}
-	if update.DMARCPolicy != "" {
-		domain.DMARCPolicy = update.DMARCPolicy
-	}
-	if update.DMARCRua != "" {
-		domain.DMARCRua = update.DMARCRua
-	}
-	if update.DMARCRuf != "" {
-		domain.DMARCRuf = update.DMARCRuf
-	}
-	if update.DMARCPercentage > 0 {
-		domain.DMARCPercentage = update.DMARCPercentage
-	}
+	if update.Name != "" { domain.Name = update.Name }
+	if update.MailHost != "" { domain.MailHost = update.MailHost }
+	if update.BounceHost != "" { domain.BounceHost = update.BounceHost }
+	if update.DMARCPolicy != "" { domain.DMARCPolicy = update.DMARCPolicy }
+	if update.DMARCRua != "" { domain.DMARCRua = update.DMARCRua }
+	if update.DMARCRuf != "" { domain.DMARCRuf = update.DMARCRuf }
+	if update.DMARCPercentage > 0 { domain.DMARCPercentage = update.DMARCPercentage }
 
 	if err := s.Store.UpdateDomain(domain); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update domain"})
 		return
 	}
+
+	// AUDIT LOG
+	go s.WS.SendAuditLog("Update Domain", fmt.Sprintf("Updated %s", domain.Name), s.getUser(r))
 
 	writeJSON(w, http.StatusOK, domain)
 }
@@ -153,10 +150,18 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch first to get name for log
+	d, _ := s.Store.GetDomainByID(uint(id))
+	name := "unknown"
+	if d != nil { name = d.Name }
+
 	if err := s.Store.DeleteDomain(uint(id)); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete domain"})
 		return
 	}
+
+	// AUDIT LOG
+	go s.WS.SendAuditLog("Delete Domain", fmt.Sprintf("Deleted domain %s (ID: %d)", name, id), s.getUser(r))
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -183,8 +188,7 @@ func (s *Server) handleListSenders(w http.ResponseWriter, r *http.Request) {
 		senders = []models.Sender{}
 	}
 
-	// FIX: Populate HasDKIM
-	domain, _ := s.Store.GetDomainByID(uint(domainID)) // need domain name
+	domain, _ := s.Store.GetDomainByID(uint(domainID))
 	if domain != nil {
 		for i := range senders {
 			senders[i].HasDKIM = core.DKIMKeyExists(domain.Name, senders[i].LocalPart)
@@ -219,8 +223,6 @@ func (s *Server) handleCreateSender(w http.ResponseWriter, r *http.Request) {
 	if snd.LocalPart != "" && snd.Email == "" {
 		snd.Email = snd.LocalPart + "@" + domain.Name
 	}
-
-	// Auto-set bounce username if not provided
 	if snd.BounceUsername == "" {
 		snd.BounceUsername = "b-" + snd.LocalPart
 	}
@@ -229,6 +231,9 @@ func (s *Server) handleCreateSender(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create sender"})
 		return
 	}
+
+	// AUDIT LOG
+	go s.WS.SendAuditLog("Create Sender", fmt.Sprintf("Added sender %s to %s", snd.Email, domain.Name), s.getUser(r))
 
 	writeJSON(w, http.StatusCreated, snd)
 }
@@ -272,26 +277,19 @@ func (s *Server) handleUpdateSender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if update.LocalPart != "" {
-		sender.LocalPart = update.LocalPart
-	}
-	if update.Email != "" {
-		sender.Email = update.Email
-	}
-	if update.IP != "" {
-		sender.IP = update.IP
-	}
-	if update.SMTPPassword != "" {
-		sender.SMTPPassword = update.SMTPPassword
-	}
-	if update.BounceUsername != "" {
-		sender.BounceUsername = update.BounceUsername
-	}
+	if update.LocalPart != "" { sender.LocalPart = update.LocalPart }
+	if update.Email != "" { sender.Email = update.Email }
+	if update.IP != "" { sender.IP = update.IP }
+	if update.SMTPPassword != "" { sender.SMTPPassword = update.SMTPPassword }
+	if update.BounceUsername != "" { sender.BounceUsername = update.BounceUsername }
 
 	if err := s.Store.UpdateSender(sender); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update sender"})
 		return
 	}
+
+	// AUDIT LOG
+	go s.WS.SendAuditLog("Update Sender", fmt.Sprintf("Updated sender %s", sender.Email), s.getUser(r))
 
 	writeJSON(w, http.StatusOK, sender)
 }
@@ -305,10 +303,18 @@ func (s *Server) handleDeleteSender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get info for log
+	snd, _ := s.Store.GetSenderByID(uint(id))
+	email := "unknown"
+	if snd != nil { email = snd.Email }
+
 	if err := s.Store.DeleteSender(uint(id)); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete sender"})
 		return
 	}
+
+	// AUDIT LOG
+	go s.WS.SendAuditLog("Delete Sender", fmt.Sprintf("Deleted sender %s (ID: %d)", email, id), s.getUser(r))
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -350,6 +356,9 @@ func (s *Server) handleSetupSender(w http.ResponseWriter, r *http.Request) {
 		bounceUser = "b-" + sender.LocalPart
 	}
 	bounceErr := core.CreateBounceAccount(bounceUser, domain.Name, s.Store)
+
+	// AUDIT LOG
+	go s.WS.SendAuditLog("Setup Sender", fmt.Sprintf("Auto-configured DKIM/Bounce for %s", sender.Email), s.getUser(r))
 
 	result := map[string]interface{}{
 		"dkim_generated":   dkimErr == nil,
