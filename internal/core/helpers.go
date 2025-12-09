@@ -143,13 +143,17 @@ func ExpandCIDR(cidr string) ([]string, error) {
 		return nil, fmt.Errorf("invalid CIDR: %v", err)
 	}
 
+	// FIX: Move declarations outside the loop so they are available in the entire function scope
+	ones, bits := ipNet.Mask.Size()
+
 	var ips []string
 	for ip := ipNet.IP.Mask(ipNet.Mask); ipNet.Contains(ip); incrementIP(ip) {
 		// Skip network and broadcast addresses for /24 and smaller
-		ones, bits := ipNet.Mask.Size()
 		if ones >= 24 {
-			if ip[3] == 0 || ip[3] == 255 {
-				continue
+			if ip4 := ip.To4(); ip4 != nil {
+				if ip4[3] == 0 || ip4[3] == 255 {
+					continue
+				}
 			}
 		}
 
