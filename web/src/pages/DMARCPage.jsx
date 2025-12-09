@@ -9,7 +9,7 @@ export default function DMARCPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   useEffect(() => { fetchDomains(); }, []);
