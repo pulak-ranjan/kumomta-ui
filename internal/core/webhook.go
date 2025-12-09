@@ -198,7 +198,8 @@ func (ws *WebhookService) RunSecurityAudit() error {
 }
 
 // 4. Daily Summary
-func (ws *WebhookService) SendDailySummary(stats map[string][]models.DayStats) error {
+// FIX: Changed models.DayStats -> DayStats (defined in this package)
+func (ws *WebhookService) SendDailySummary(stats map[string][]DayStats) error {
 	settings, err := ws.Store.GetSettings()
 	if err != nil || settings == nil || !settings.WebhookEnabled || settings.WebhookURL == "" {
 		return nil
