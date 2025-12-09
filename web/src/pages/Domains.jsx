@@ -6,7 +6,8 @@ import {
   saveSender,
   deleteSender,
   getSettings,
-  getSystemIPs
+  getSystemIPs,
+  importSenders
 } from "../api";
 
 export default function Domains() {
@@ -16,6 +17,7 @@ export default function Domains() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [editingDomain, setEditingDomain] = useState(null);
+  const [showImport, setShowImport] = useState(false);
   const [senderForm, setSenderForm] = useState({
     domainID: null,
     id: 0,
@@ -73,6 +75,24 @@ export default function Domains() {
       await load();
     } catch (err) {
       setMsg(err.message || "Failed to delete domain");
+    }
+  };
+
+  const handleImport = async (e) => {
+    e.preventDefault();
+    const file = e.target.file.files[0];
+    if (!file) return;
+    
+    setLoading(true);
+    try {
+      const res = await importSenders(file);
+      setMsg(res.message);
+      setShowImport(false);
+      await load();
+    } catch (err) {
+      setMsg("Import Error: " + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -202,14 +222,23 @@ export default function Domains() {
             </div>
           )}
         </div>
-        <button
-          onClick={() => handleEditDomain(null)}
-          className="px-3 py-1 rounded-md bg-sky-500 hover:bg-sky-600 text-xs"
-        >
-          + New Domain
-        </button>
+        <div className="flex gap-2">
+            <button
+            onClick={() => setShowImport(true)}
+            className="px-3 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-xs"
+            >
+            ↑ Bulk Import
+            </button>
+            <button
+            onClick={() => handleEditDomain(null)}
+            className="px-3 py-1 rounded-md bg-sky-500 hover:bg-sky-600 text-xs"
+            >
+            + New Domain
+            </button>
+        </div>
       </div>
       {msg && <div className="text-xs text-slate-300">{msg}</div>}
+      
       {loading ? (
         <div className="text-slate-400">Loading...</div>
       ) : domains.length === 0 ? (
@@ -343,6 +372,44 @@ export default function Domains() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Import Modal */}
+      {showImport && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 w-full max-w-md">
+            <h3 className="text-sm font-semibold mb-3">Bulk Import Senders</h3>
+            <p className="text-xs text-slate-400 mb-3">
+                Upload a <b>CSV file</b> with columns:<br/>
+                <code>Domain, LocalPart, IP, Password</code>
+            </p>
+            <form onSubmit={handleImport} className="space-y-3 text-sm">
+                <input type="file" name="file" accept=".csv" className="block w-full text-xs text-slate-300
+                  file:mr-4 file:py-2 file:px-4
+                  file:rounded-md file:border-0
+                  file:text-xs file:font-semibold
+                  file:bg-slate-800 file:text-slate-300
+                  hover:file:bg-slate-700
+                " required />
+                
+                <div className="flex justify-end gap-2 pt-2 text-xs">
+                    <button
+                    type="button"
+                    onClick={() => setShowImport(false)}
+                    className="px-3 py-1 rounded bg-slate-800"
+                    >
+                    Cancel
+                    </button>
+                    <button
+                    type="submit"
+                    className="px-3 py-1 rounded bg-sky-500 hover:bg-sky-600"
+                    >
+                    Upload & Process
+                    </button>
+                </div>
+            </form>
+          </div>
         </div>
       )}
 
