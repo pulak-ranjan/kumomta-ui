@@ -4,174 +4,183 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os/exec"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
 
-type ctxKeyAdmin struct{}
-
 type Server struct {
-	Store *store.Store
+	Store  *store.Store
+	Router chi.Router
 }
+
+type contextKey string
+
+const adminContextKey contextKey = "admin"
 
 func NewServer(st *store.Store) *Server {
-	return &Server{Store: st}
+	s := &Server{Store: st}
+	s.Router = s.routes()
+	return s
 }
 
-func (s *Server) Router() http.Handler {
+func (s *Server) routes() chi.Router {
 	r := chi.NewRouter()
 
-	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(securityHeaders)
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Temp-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
 
-	r.Get("/api/status", s.handleStatus)
+	// Public routes
+	r.Post("/api/auth/register", s.handleRegister)
+	r.Post("/api/auth/login", s.handleLogin)
+	r.Post("/api/auth/verify-2fa", s.handleVerify2FA)
 
-	r.Route("/api/auth", func(r chi.Router) {
-		r.Post("/register", s.handleRegister)
-		r.Post("/login", s.handleLogin)
-	})
-
+	// Protected routes
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 
+		// Auth & Profile
 		r.Get("/api/auth/me", s.handleMe)
-
-		// System (IPs)
-		r.Get("/api/system/ips", s.handleGetSystemIPs)
-		r.Post("/api/system/ips", s.handleAddIPs)
-
-		// Dashboard
-		r.Get("/api/dashboard/stats", s.handleGetDashboardStats)
-		r.Post("/api/dashboard/ai", s.handleAIInsights)
+		r.Post("/api/auth/logout", s.handleLogout)
+		r.Post("/api/auth/setup-2fa", s.handleSetup2FA)
+		r.Post("/api/auth/enable-2fa", s.handleEnable2FA)
+		r.Post("/api/auth/disable-2fa", s.handleDisable2FA)
+		r.Post("/api/auth/theme", s.handleSetTheme)
+		r.Get("/api/auth/sessions", s.handleListSessions)
 
 		// Settings
 		r.Get("/api/settings", s.handleGetSettings)
-		r.Post("/api/settings", s.handleSaveSettings)
+		r.Post("/api/settings", s.handleSetSettings)
 
-		// Config
-		r.Get("/api/config/preview", s.handlePreviewConfig)
-		r.Post("/api/config/apply", s.handleApplyConfig)
+		// Domains
+		r.Get("/api/domains", s.handleListDomains)
+		r.Post("/api/domains", s.handleCreateDomain)
+		r.Get("/api/domains/{id}", s.handleGetDomain)
+		r.Put("/api/domains/{id}", s.handleUpdateDomain)
+		r.Delete("/api/domains/{id}", s.handleDeleteDomain)
+
+		// Senders
+		r.Get("/api/domains/{domainID}/senders", s.handleListSenders)
+		r.Post("/api/domains/{domainID}/senders", s.handleCreateSender)
+		r.Get("/api/senders/{id}", s.handleGetSender)
+		r.Put("/api/senders/{id}", s.handleUpdateSender)
+		r.Delete("/api/senders/{id}", s.handleDeleteSender)
+
+		// One-click setup
+		r.Post("/api/domains/{domainID}/senders/{id}/setup", s.handleSetupSender)
+
+		// Bounce Accounts
+		r.Get("/api/bounce", s.handleListBounce)
+		r.Post("/api/bounce", s.handleCreateBounce)
+		r.Delete("/api/bounce/{id}", s.handleDeleteBounce)
+
+		// System IPs
+		r.Get("/api/ips", s.handleListIPs)
+		r.Post("/api/ips", s.handleAddIP)
+		r.Post("/api/ips/bulk", s.handleBulkAddIPs)
+		r.Post("/api/ips/cidr", s.handleAddIPsByCIDR)
+		r.Post("/api/ips/detect", s.handleDetectIPs)
+		r.Delete("/api/ips/{id}", s.handleDeleteIP)
 
 		// DKIM
-		r.Get("/api/dkim/records", s.handleListDKIMRecords)
+		r.Get("/api/dkim", s.handleListDKIM)
 		r.Post("/api/dkim/generate", s.handleGenerateDKIM)
 
-		// Domains + Senders
-		r.Route("/api/domains", func(r chi.Router) {
-			r.Get("/", s.handleListDomains)
-			r.Post("/", s.handleSaveDomain)
-			r.Post("/import", s.handleImportSenders) // CSV Import
+		// DMARC
+		r.Get("/api/dmarc/{domainID}", s.handleGetDMARC)
+		r.Post("/api/dmarc/{domainID}", s.handleSetDMARC)
 
-			r.Route("/{domainID}", func(r chi.Router) {
-				r.Get("/", s.handleGetDomain)
-				r.Delete("/", s.handleDeleteDomain)
+		// DNS Records (all-in-one)
+		r.Get("/api/dns/{domainID}", s.handleGetAllDNS)
 
-				r.Get("/senders", s.handleListSenders)
-				r.Post("/senders", s.handleSaveSender)
-			})
-		})
+		// Stats
+		r.Get("/api/stats/domains", s.handleGetDomainStats)
+		r.Get("/api/stats/domains/{domain}", s.handleGetSingleDomainStats)
+		r.Get("/api/stats/summary", s.handleGetStatsSummary)
+		r.Post("/api/stats/refresh", s.handleRefreshStats)
 
-		r.Delete("/api/senders/{senderID}", s.handleDeleteSenderByID)
+		// Queue
+		r.Get("/api/queue", s.handleGetQueue)
+		r.Get("/api/queue/stats", s.handleGetQueueStats)
+		r.Delete("/api/queue/{id}", s.handleDeleteQueueMessage)
+		r.Post("/api/queue/flush", s.handleFlushQueue)
 
-		// Bounce
-		r.Get("/api/bounces", s.handleListBounceAccounts)
-		r.Post("/api/bounces", s.handleSaveBounceAccount)
-		r.Delete("/api/bounces/{bounceID}", s.handleDeleteBounceAccount)
-		r.Post("/api/bounces/apply", s.handleApplyBounceAccounts)
+		// Webhooks
+		r.Get("/api/webhooks/settings", s.handleGetWebhookSettings)
+		r.Post("/api/webhooks/settings", s.handleSetWebhookSettings)
+		r.Post("/api/webhooks/test", s.handleTestWebhook)
+		r.Get("/api/webhooks/logs", s.handleGetWebhookLogs)
+		r.Post("/api/webhooks/check-bounces", s.handleCheckBounces)
 
-		// Logs
-		r.Get("/api/logs/kumomta", s.handleLogsKumo)
-		r.Get("/api/logs/dovecot", s.handleLogsDovecot)
-		r.Get("/api/logs/fail2ban", s.handleLogsFail2ban)
+		// System
+		r.Get("/api/system/health", s.handleSystemHealth)
+		r.Get("/api/system/services", s.handleSystemServices)
+		r.Get("/api/system/ports", s.handleSystemPorts)
+		r.Post("/api/system/ai-analyze", s.handleAIAnalyze)
+
+		// Bulk Import
+		r.Post("/api/import/csv", s.handleCSVImport)
 	})
-
-	fileServer := http.FileServer(http.Dir("./web/dist"))
-	r.Handle("/*", fileServer)
 
 	return r
 }
 
-func securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("X-XSS-Protection", "1; mode=block")
-		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		next.ServeHTTP(w, r)
-	})
-}
-
-func writeJSON(w http.ResponseWriter, code int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// Updated Auth Middleware for Sessions
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authz := r.Header.Get("Authorization")
-		if authz == "" {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing authorization header"})
 			return
 		}
 
-		parts := strings.SplitN(authz, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid authorization header"})
-			return
-		}
-		token := strings.TrimSpace(parts[1])
-		if token == "" {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "empty token"})
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if token == authHeader {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid authorization format"})
 			return
 		}
 
-		// Use new session-based lookup
 		admin, err := s.Store.GetAdminBySessionToken(token)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired token"})
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), ctxKeyAdmin{}, admin)
+		ctx := context.WithValue(r.Context(), adminContextKey, admin)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 func getAdminFromContext(ctx context.Context) *models.AdminUser {
-	val := ctx.Value(ctxKeyAdmin{})
-	if val == nil {
+	admin, ok := ctx.Value(adminContextKey).(*models.AdminUser)
+	if !ok {
 		return nil
 	}
-	if u, ok := val.(*models.AdminUser); ok {
-		return u
-	}
-	return nil
+	return admin
 }
 
-func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	resp := map[string]string{
-		"api":      "ok",
-		"kumomta":  serviceStatus("kumomta"),
-		"dovecot":  serviceStatus("dovecot"),
-		"fail2ban": serviceStatus("fail2ban"),
-	}
-	writeJSON(w, http.StatusOK, resp)
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
 }
 
-func serviceStatus(name string) string {
-	cmd := exec.Command("systemctl", "is-active", "--quiet", name)
-	if err := cmd.Run(); err != nil {
-		return "inactive"
-	}
-	return "active"
+// POST /api/auth/logout
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	s.Store.DeleteSession(token)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
 }
