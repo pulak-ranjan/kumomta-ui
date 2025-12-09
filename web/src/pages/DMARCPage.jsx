@@ -1,4 +1,17 @@
 import React, { useState, useEffect } from 'react';
+import { 
+  ShieldCheck, 
+  Globe, 
+  Settings, 
+  Copy, 
+  Check, 
+  Server, 
+  Mail, 
+  FileKey,
+  AlertTriangle 
+} from 'lucide-react';
+import { listDomains } from "../api"; // Assuming listDomains is exported from api.js
+import { cn } from '../lib/utils';
 
 export default function DMARCPage() {
   const [domains, setDomains] = useState([]);
@@ -9,7 +22,6 @@ export default function DMARCPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
-  // FIX: Use correct token key
   const token = localStorage.getItem('kumoui_token');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -32,8 +44,11 @@ export default function DMARCPage() {
       ruf: domain.dmarc_ruf || '', 
       percentage: domain.dmarc_percentage || 100 
     });
+    setRecord(null); // Clear previous
+    setAllDns(null);
+    
     try {
-      const res = await fetch(`/api/dmarc/${domain.id}`, { headers }); // lowercase id
+      const res = await fetch(`/api/dmarc/${domain.id}`, { headers });
       if (res.ok) setRecord(await res.json());
       
       const dnsRes = await fetch(`/api/dns/${domain.id}`, { headers });
@@ -49,126 +64,195 @@ export default function DMARCPage() {
       const res = await fetch(`/api/dmarc/${selected.id}`, { method: 'POST', headers, body: JSON.stringify(dmarc) });
       if (res.ok) { 
         setRecord(await res.json()); 
-        setMessage('✅ DMARC saved!'); 
+        setMessage('DMARC record updated successfully'); 
         fetchDomains(); 
       }
-      else setMessage('❌ Failed to save');
-    } catch (e) { setMessage('❌ Error: ' + e.message); }
+      else setMessage('Failed to save settings');
+    } catch (e) { setMessage('Error: ' + e.message); }
     setSaving(false);
     setTimeout(() => setMessage(''), 3000);
   };
 
-  const copyToClipboard = (text) => {
+  const [copied, setCopied] = useState("");
+  const copyToClipboard = (text, id) => {
     navigator.clipboard.writeText(text);
-    setMessage('📋 Copied to clipboard!');
-    setTimeout(() => setMessage(''), 2000);
+    setCopied(id);
+    setTimeout(() => setCopied(""), 2000);
   };
 
   return (
-    <div className="p-6 bg-gray-900 min-h-screen text-white">
-      <h1 className="text-2xl font-bold mb-6">🛡️ DMARC Generator</h1>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">DMARC & DNS</h1>
+        <p className="text-muted-foreground">Configure email authentication policies and view DNS records.</p>
+      </div>
 
-      {message && <div className="mb-4 p-3 bg-gray-800 rounded">{message}</div>}
+      {message && (
+        <div className={cn("p-4 rounded-md text-sm font-medium", message.includes("Failed") || message.includes("Error") ? "bg-destructive/10 text-destructive" : "bg-green-500/10 text-green-600")}>
+          {message}
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-gray-800 p-4 rounded-lg">
-          <h2 className="text-lg font-semibold mb-4">Select Domain</h2>
-          <div className="space-y-2 max-h-96 overflow-y-auto">
+      <div className="grid lg:grid-cols-3 gap-6">
+        
+        {/* Column 1: Domain Selection */}
+        <div className="bg-card border rounded-xl p-4 shadow-sm flex flex-col h-[calc(100vh-200px)]">
+          <h3 className="font-semibold mb-4 flex items-center gap-2">
+            <Globe className="w-4 h-4 text-muted-foreground" /> Select Domain
+          </h3>
+          <div className="space-y-2 overflow-y-auto flex-1 pr-2">
             {domains.map(d => (
               <button key={d.id} onClick={() => selectDomain(d)}
-                className={`w-full text-left p-3 rounded ${selected?.id === d.id ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
-                <div className="font-semibold">{d.name}</div>
-                <div className="text-sm text-gray-400">Policy: {d.dmarc_policy || 'none'}</div>
+                className={cn(
+                  "w-full text-left p-3 rounded-lg border transition-all flex items-center justify-between group",
+                  selected?.id === d.id 
+                    ? "bg-primary/5 border-primary text-primary" 
+                    : "bg-background border-transparent hover:bg-muted"
+                )}
+              >
+                <div>
+                  <div className="font-medium">{d.name}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5 capitalize">Policy: {d.dmarc_policy || 'none'}</div>
+                </div>
+                {selected?.id === d.id && <Check className="w-4 h-4" />}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="bg-gray-800 p-4 rounded-lg">
-          <h2 className="text-lg font-semibold mb-4">DMARC Settings</h2>
-          {!selected ? <p className="text-gray-400">Select a domain to configure DMARC</p> : (
-            <form onSubmit={saveDMARC} className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Policy</label>
+        {/* Column 2: Settings Form */}
+        <div className="bg-card border rounded-xl p-6 shadow-sm">
+          <h3 className="font-semibold mb-6 flex items-center gap-2">
+            <Settings className="w-4 h-4 text-muted-foreground" /> Configuration
+          </h3>
+          {!selected ? (
+            <div className="h-full flex flex-col items-center justify-center text-muted-foreground text-sm opacity-50">
+              <Globe className="w-12 h-12 mb-2 stroke-1" />
+              Select a domain to configure
+            </div>
+          ) : (
+            <form onSubmit={saveDMARC} className="space-y-5">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Policy (p)</label>
                 <select value={dmarc.policy} onChange={e => setDmarc({...dmarc, policy: e.target.value})}
-                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2">
-                  <option value="none">none (monitor only)</option>
-                  <option value="quarantine">quarantine (spam folder)</option>
-                  <option value="reject">reject (block delivery)</option>
+                  className="w-full h-10 rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-ring"
+                >
+                  <option value="none">None (Monitor Only)</option>
+                  <option value="quarantine">Quarantine (Spam Folder)</option>
+                  <option value="reject">Reject (Block)</option>
                 </select>
+                <p className="text-[10px] text-muted-foreground">Action to take if checks fail.</p>
               </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Aggregate Reports (rua)</label>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Aggregate Email (rua)</label>
                 <input type="email" value={dmarc.rua} onChange={e => setDmarc({...dmarc, rua: e.target.value})}
-                  placeholder="dmarc@yourdomain.com" className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2" />
+                  placeholder="mailto:dmarc@..." className="w-full h-10 rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-ring" />
               </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Forensic Reports (ruf)</label>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Forensic Email (ruf)</label>
                 <input type="email" value={dmarc.ruf} onChange={e => setDmarc({...dmarc, ruf: e.target.value})}
-                  placeholder="forensic@yourdomain.com" className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2" />
+                  placeholder="mailto:forensic@..." className="w-full h-10 rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-ring" />
               </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Percentage (%)</label>
-                <input type="number" min="1" max="100" value={dmarc.percentage} onChange={e => setDmarc({...dmarc, percentage: +e.target.value})}
-                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2" />
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Percentage (pct)</label>
+                <div className="flex items-center gap-3">
+                  <input 
+                    type="range" min="0" max="100" 
+                    value={dmarc.percentage} onChange={e => setDmarc({...dmarc, percentage: +e.target.value})}
+                    className="flex-1"
+                  />
+                  <span className="w-12 text-right text-sm font-mono">{dmarc.percentage}%</span>
+                </div>
               </div>
-              <button type="submit" disabled={saving} className="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded disabled:opacity-50">
-                {saving ? 'Saving...' : '💾 Save & Generate'}
+              <button type="submit" disabled={saving} className="w-full h-10 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm">
+                {saving ? 'Generating...' : 'Save & Generate Record'}
               </button>
             </form>
           )}
         </div>
 
-        <div className="space-y-4">
-          {record && (
-            <div className="bg-gray-800 p-4 rounded-lg">
-              <h2 className="text-lg font-semibold mb-4">DMARC Record</h2>
+        {/* Column 3: DNS Records */}
+        <div className="bg-card border rounded-xl p-6 shadow-sm overflow-y-auto h-[calc(100vh-200px)]">
+          <h3 className="font-semibold mb-6 flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-muted-foreground" /> DNS Preview
+          </h3>
+          
+          <div className="space-y-6">
+            {/* DMARC Result */}
+            {record && (
               <div className="space-y-2">
-                <div><span className="text-gray-400">Name:</span> <code className="bg-gray-700 px-2 py-1 rounded">{record.dns_name}</code></div>
-                <div><span className="text-gray-400">Type:</span> <code className="bg-gray-700 px-2 py-1 rounded">TXT</code></div>
-                <div>
-                  <span className="text-gray-400">Value:</span>
-                  <div className="mt-1 bg-gray-700 p-2 rounded text-sm break-all">{record.dns_value}</div>
+                <div className="flex items-center justify-between text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  <span>_dmarc TXT Record</span>
+                  <button onClick={() => copyToClipboard(record.dns_value, 'dmarc-val')} className="hover:text-foreground transition-colors">
+                    {copied === 'dmarc-val' ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                  </button>
                 </div>
-                <button onClick={() => copyToClipboard(record.dns_value)} className="text-blue-400 hover:text-blue-300 text-sm">📋 Copy Value</button>
+                <div className="p-3 bg-muted/50 border rounded-md font-mono text-xs break-all text-foreground">
+                  {record.dns_value}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {allDns && (
-            <div className="bg-gray-800 p-4 rounded-lg">
-              <h2 className="text-lg font-semibold mb-4">All DNS Records</h2>
-              <div className="space-y-3 text-sm">
+            {/* Other Records */}
+            {allDns && (
+              <div className="space-y-4 pt-4 border-t">
                 {allDns.a?.map((r, i) => (
-                  <div key={i} className="bg-gray-700 p-2 rounded">
-                    <div className="text-blue-400">A Record</div>
-                    <div>{r.name} → {r.value}</div>
-                  </div>
+                  <DNSRow key={`a-${i}`} type="A" name={r.name} value={r.value} icon={Server} color="bg-blue-500/10 text-blue-600" />
                 ))}
                 {allDns.mx?.map((r, i) => (
-                  <div key={i} className="bg-gray-700 p-2 rounded">
-                    <div className="text-purple-400">MX Record</div>
-                    <div>{r.name} → {r.value}</div>
-                  </div>
+                  <DNSRow key={`mx-${i}`} type="MX" name={r.name} value={r.value} icon={Mail} color="bg-purple-500/10 text-purple-600" />
                 ))}
                 {allDns.spf && (
-                  <div className="bg-gray-700 p-2 rounded">
-                    <div className="text-green-400">SPF Record (TXT)</div>
-                    <div className="break-all">{allDns.spf.value}</div>
-                    <button onClick={() => copyToClipboard(allDns.spf.value)} className="text-blue-400 text-xs mt-1">📋 Copy</button>
-                  </div>
+                  <DNSRow type="SPF" name="TXT" value={allDns.spf.value} icon={ShieldCheck} color="bg-green-500/10 text-green-600" isCopyable onCopy={copyToClipboard} />
                 )}
                 {allDns.dkim?.map((r, i) => (
-                  <div key={i} className="bg-gray-700 p-2 rounded">
-                    <div className="text-yellow-400">DKIM Record (TXT)</div>
-                    <div className="text-xs">{r.dns_name}</div>
-                    <button onClick={() => copyToClipboard(r.dns_value)} className="text-blue-400 text-xs mt-1">📋 Copy</button>
-                  </div>
+                  <DNSRow key={`dkim-${i}`} type="DKIM" name={r.dns_name} value={r.dns_value} icon={FileKey} color="bg-orange-500/10 text-orange-600" isCopyable onCopy={copyToClipboard} />
                 ))}
               </div>
-            </div>
-          )}
+            )}
+
+            {!record && !allDns && (
+              <div className="text-center py-8 text-muted-foreground text-sm italic">
+                Select a domain to view records
+              </div>
+            )}
+          </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function DNSRow({ type, name, value, icon: Icon, color, isCopyable, onCopy }) {
+  const [isHovered, setIsHovered] = useState(false);
+  
+  return (
+    <div 
+      className="group relative"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <div className="flex items-start gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors">
+        <div className={cn("p-1.5 rounded-md shrink-0", color)}>
+          <Icon className="w-3.5 h-3.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-[10px] font-bold uppercase text-muted-foreground">{type}</span>
+            <span className="text-xs font-medium truncate">{name}</span>
+          </div>
+          <div className="text-[11px] font-mono text-muted-foreground break-all leading-tight">
+            {value}
+          </div>
+        </div>
+        {isCopyable && (
+          <button 
+            onClick={() => onCopy(value, value)} // simple id strategy
+            className={cn("absolute top-2 right-2 p-1.5 rounded-md hover:bg-background border shadow-sm transition-opacity", isHovered ? "opacity-100" : "opacity-0")}
+          >
+            <Copy className="w-3 h-3" />
+          </button>
+        )}
       </div>
     </div>
   );
