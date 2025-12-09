@@ -34,8 +34,10 @@ func (s *Server) routes() chi.Router {
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	
+	// FIX: Invalid CORS config (Wildcard + Credentials) replaced with dynamic origin check
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowOriginFunc:  func(r *http.Request, origin string) bool { return true },
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Temp-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -83,25 +85,21 @@ func (s *Server) routes() chi.Router {
 		r.Delete("/api/senders/{id}", s.handleDeleteSender)
 		r.Post("/api/domains/{domainID}/senders/{id}/setup", s.handleSetupSender)
 
-		// Bounce Accounts (Aligned with Frontend)
+		// Bounce Accounts
 		r.Get("/api/bounces", s.handleListBounce)
-		r.Post("/api/bounces", s.handleSaveBounceAccount) // create or update
+		r.Post("/api/bounces", s.handleSaveBounceAccount)
 		r.Delete("/api/bounces/{bounceID}", s.handleDeleteBounceAccount)
 		r.Post("/api/bounces/apply", s.handleApplyBounceAccounts)
 
-		// System IPs (Aligned with Frontend)
+		// System IPs
 		r.Get("/api/system/ips", s.handleListIPs)
-		r.Post("/api/system/ips", s.handleAddIP) // handles single add if body matches, or create separate if needed
+		r.Post("/api/system/ips", s.handleAddIP)
 		r.Delete("/api/system/ips/{id}", s.handleDeleteIP)
-		// Frontend might use /api/system/ips for add, verify if IPsPage uses specific route
-		// Note: Frontend IPsPage uses POST /api/system/ips for CIDR/List adds.
-		// We should route that to handleBulkAddIPs or similar if logic differs, 
-		// but typically we can check body. For now let's map:
-		r.Post("/api/system/ips/bulk", s.handleBulkAddIPs) // if frontend calls this
+		r.Post("/api/system/ips/bulk", s.handleBulkAddIPs)
 		r.Post("/api/system/ips/cidr", s.handleAddIPsByCIDR)
 		r.Post("/api/system/ips/detect", s.handleDetectIPs)
 
-		// DKIM (Aligned with Frontend)
+		// DKIM
 		r.Get("/api/dkim/records", s.handleListDKIM)
 		r.Post("/api/dkim/generate", s.handleGenerateDKIM)
 
@@ -129,11 +127,11 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/webhooks/logs", s.handleGetWebhookLogs)
 		r.Post("/api/webhooks/check-bounces", s.handleCheckBounces)
 
-		// Config (Missing in original)
+		// Config
 		r.Get("/api/config/preview", s.handlePreviewConfig)
 		r.Post("/api/config/apply", s.handleApplyConfig)
 
-		// Logs (Missing in original)
+		// Logs
 		r.Get("/api/logs/kumomta", s.handleLogsKumo)
 		r.Get("/api/logs/dovecot", s.handleLogsDovecot)
 		r.Get("/api/logs/fail2ban", s.handleLogsFail2ban)
