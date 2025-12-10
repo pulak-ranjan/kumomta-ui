@@ -28,6 +28,12 @@ type KumoLogEntry struct {
 	Type      string    `json:"type"`
 	Timestamp time.Time `json:"event_time"`
 	Sender    string    `json:"sender"`
+	
+	// NEW: Capture response for AI analysis
+	Response struct {
+		Code    int    `json:"code"`
+		Content string `json:"content"`
+	} `json:"response"`
 }
 
 const KumoLogDir = "/var/log/kumomta"
@@ -59,7 +65,6 @@ func openLogFile(path string) (io.ReadCloser, error) {
 	return &plainReader{f: f, r: br}, nil
 }
 
-// Wrapper to close both the decoder and the file
 type compressedReader struct {
 	f *os.File
 	d *zstd.Decoder
@@ -70,7 +75,6 @@ func (c *compressedReader) Close() error {
 	return c.f.Close() 
 }
 
-// Wrapper for plain text buffered reader
 type plainReader struct {
 	f *os.File
 	r *bufio.Reader
@@ -89,13 +93,9 @@ func extractDomain(email string) string {
 
 // ParseKumoLogs (Database Sync)
 func ParseKumoLogs(st *store.Store, hoursBack int) error {
-	// Calculate days to fetch (ensure at least 1 day)
 	days := hoursBack / 24
-	if days < 1 {
-		days = 1
-	}
+	if days < 1 { days = 1 }
 
-	// Re-use the aggregation logic
 	stats, err := GetAllDomainsStats(days)
 	if err != nil {
 		return err
@@ -127,7 +127,6 @@ func GetDomainStatsFromLogs(domain string, days int) ([]DayStats, error) {
 	if d, ok := all[domain]; ok {
 		return d, nil
 	}
-	// Return empty days if not found
 	empty := make([]DayStats, days)
 	now := time.Now()
 	for i := 0; i < days; i++ {
@@ -146,31 +145,25 @@ type DayStats struct {
 
 // GetAllDomainsStats (Aggregated & Parallel)
 func GetAllDomainsStats(days int) (map[string][]DayStats, error) {
-	// 1. Check Cache
 	cacheLock.RLock()
 	if time.Now().Before(cacheExpiry) && cachedStats != nil {
-		res := cachedStats // copy pointer
+		res := cachedStats
 		cacheLock.RUnlock()
 		return res, nil
 	}
 	cacheLock.RUnlock()
 
-	// 2. Setup Scanning
 	files, _ := filepath.Glob(filepath.Join(KumoLogDir, "*"))
 	now := time.Now()
 	cutoff := now.AddDate(0, 0, -days)
 
-	// Thread-safe storage for results
-	// map[domain]map[date]*DayStats
 	var mu sync.Mutex
 	tempStats := make(map[string]map[string]*DayStats)
 
-	// Worker Pool Settings
-	numWorkers := 50  // Process 50 files simultaneously
+	numWorkers := 50
 	fileChan := make(chan string, len(files))
 	var wg sync.WaitGroup
 
-	// 3. Start Workers
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
@@ -181,9 +174,7 @@ func GetAllDomainsStats(days int) (map[string][]DayStats, error) {
 		}()
 	}
 
-	// 4. Feed Workers
 	for _, file := range files {
-		// Quick optimization: skip old files without opening
 		if info, err := os.Stat(file); err == nil && !info.IsDir() {
 			if info.ModTime().After(cutoff) {
 				fileChan <- file
@@ -191,18 +182,14 @@ func GetAllDomainsStats(days int) (map[string][]DayStats, error) {
 		}
 	}
 	close(fileChan)
-
-	// 5. Wait for finish
 	wg.Wait()
 
-	// 6. Format Results
 	result := make(map[string][]DayStats)
 	for domain, dateMap := range tempStats {
 		daysList := make([]DayStats, 0, len(dateMap))
 		for _, stat := range dateMap {
 			daysList = append(daysList, *stat)
 		}
-		// Sort by date
 		for i := 0; i < len(daysList)-1; i++ {
 			for j := i + 1; j < len(daysList); j++ {
 				if daysList[i].Date > daysList[j].Date {
@@ -213,7 +200,6 @@ func GetAllDomainsStats(days int) (map[string][]DayStats, error) {
 		result[domain] = daysList
 	}
 
-	// 7. Save to Cache
 	cacheLock.Lock()
 	cachedStats = result
 	cacheExpiry = time.Now().Add(CACHE_DURATION)
@@ -222,40 +208,26 @@ func GetAllDomainsStats(days int) (map[string][]DayStats, error) {
 	return result, nil
 }
 
-// processFile is run by workers
 func processFile(file string, cutoff time.Time, mu *sync.Mutex, tempStats map[string]map[string]*DayStats) {
 	rc, err := openLogFile(file)
-	if err != nil {
-		return
-	}
+	if err != nil { return }
 	defer rc.Close()
 
 	scanner := bufio.NewScanner(rc)
-	// Large buffer for potentially long log lines
 	buf := make([]byte, 0, 1024*1024)
 	scanner.Buffer(buf, 5*1024*1024)
 
-	// Local aggregation to reduce mutex locking
 	localStats := make(map[string]map[string]*DayStats)
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		
-		// Find start of JSON object
 		if idx := strings.Index(line, "{"); idx >= 0 {
 			line = line[idx:]
-		} else {
-			continue
-		}
+		} else { continue }
 
 		var entry KumoLogEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue
-		}
-
-		if entry.Timestamp.Before(cutoff) {
-			continue
-		}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil { continue }
+		if entry.Timestamp.Before(cutoff) { continue }
 
 		domain := extractDomain(entry.Sender)
 		if domain == "" { continue }
@@ -278,16 +250,11 @@ func processFile(file string, cutoff time.Time, mu *sync.Mutex, tempStats map[st
 		}
 	}
 
-	// Merge into main stats (Locking only for the merge, not during parsing)
 	mu.Lock()
 	for dom, days := range localStats {
-		if tempStats[dom] == nil {
-			tempStats[dom] = make(map[string]*DayStats)
-		}
+		if tempStats[dom] == nil { tempStats[dom] = make(map[string]*DayStats) }
 		for date, stat := range days {
-			if tempStats[dom][date] == nil {
-				tempStats[dom][date] = &DayStats{Date: date}
-			}
+			if tempStats[dom][date] == nil { tempStats[dom][date] = &DayStats{Date: date} }
 			target := tempStats[dom][date]
 			target.Sent += stat.Sent
 			target.Delivered += stat.Delivered
