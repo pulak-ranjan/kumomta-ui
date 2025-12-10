@@ -74,14 +74,20 @@ type BounceAccount struct {
 type Sender struct {
 	ID       uint `gorm:"primaryKey" json:"id"`
 	DomainID uint `gorm:"index" json:"domain_id"`
+	Domain   Domain `json:"-" gorm:"foreignKey:DomainID"` // Relation for Warmup Logic
 
 	LocalPart    string `json:"local_part"`
 	Email        string `json:"email"`
 	IP           string `json:"ip"` // specific IP for this sender
 	SMTPPassword string `json:"smtp_password,omitempty"`
 	
-	// FIX: BounceUsername is now a real column (removed gorm:"-")
 	BounceUsername string `json:"bounce_username"`
+
+	// Warmup State (NEW)
+	WarmupEnabled    bool      `json:"warmup_enabled"`
+	WarmupPlan       string    `json:"warmup_plan"`        // "conservative", "standard"
+	WarmupDay        int       `json:"warmup_day"`         // 1, 2, 3...
+	WarmupLastUpdate time.Time `json:"warmup_last_update"` // Last time we bumped the day
 
 	// Virtual field for DKIM check (computed at runtime)
 	HasDKIM bool `gorm:"-" json:"has_dkim"` 
@@ -108,7 +114,7 @@ type EmailStats struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// QueueMessage represents a message in the mail queue
+// QueueMessage represents a message in the mail queue (RESTORED)
 type QueueMessage struct {
 	ID          string    `json:"id"`
 	Sender      string    `json:"sender"`
@@ -131,4 +137,14 @@ type WebhookLog struct {
 	Status    int       `json:"status"`     // HTTP status code
 	Response  string    `json:"response"`   // Response body
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// APIKey for external applications (NEW)
+type APIKey struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `json:"name"`                   // e.g. "EmailVerifier App"
+	Key       string    `gorm:"uniqueIndex" json:"key"` // The secret token
+	Scopes    string    `json:"scopes"`                 // e.g. "verify,relay"
+	CreatedAt time.Time `json:"created_at"`
+	LastUsed  time.Time `json:"last_used"`
 }
