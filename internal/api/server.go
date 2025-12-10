@@ -21,9 +21,8 @@ type Server struct {
 	Router chi.Router
 }
 
-type contextKey string
-
 const adminContextKey contextKey = "admin"
+type contextKey string
 
 func NewServer(st *store.Store, ws *core.WebhookService) *Server {
 	s := &Server{Store: st, WS: ws}
@@ -130,13 +129,22 @@ func (s *Server) routes() chi.Router {
 		r.Post("/api/webhooks/check-bounces", s.handleCheckBounces)
 
 		// System Tools & Actions (Guardian)
-		r.Post("/api/system/check-blacklist", s.handleCheckBlacklist) // Manual Trigger
-		r.Post("/api/system/check-security", s.handleCheckSecurity)   // Manual Trigger
-		r.Post("/api/system/action/block-ip", s.handleBlockIP)        // Manual Block
-		r.Post("/api/tools/send-test", s.handleSendTestEmail)         // Test Mail Tool
+		r.Post("/api/system/check-blacklist", s.handleCheckBlacklist)
+		r.Post("/api/system/check-security", s.handleCheckSecurity)
+		r.Post("/api/system/action/block-ip", s.handleBlockIP)
+		r.Post("/api/tools/send-test", s.handleSendTestEmail)
 
 		// AI Analysis
 		r.Post("/api/system/ai-analyze", s.handleAIAnalyze)
+
+		// --- NEW: Warmup Routes ---
+		r.Get("/api/warmup", s.handleGetWarmupList)
+		r.Post("/api/warmup/{id}", s.handleUpdateWarmup)
+
+		// --- NEW: API Keys Routes ---
+		r.Get("/api/keys", s.handleListKeys)
+		r.Post("/api/keys", s.handleCreateKey)
+		r.Delete("/api/keys/{id}", s.handleDeleteKey)
 
 		// Config
 		r.Get("/api/config/preview", s.handlePreviewConfig)
@@ -187,11 +195,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 }
 
 func getAdminFromContext(ctx context.Context) *models.AdminUser {
-	admin, ok := ctx.Value(adminContextKey).(*models.AdminUser)
-	if !ok {
-		return nil
-	}
-	return admin
+	if u, ok := ctx.Value(adminContextKey).(*models.AdminUser); ok { return u }
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
