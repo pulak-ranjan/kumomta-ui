@@ -37,7 +37,7 @@ func (s *Server) routes() chi.Router {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	
-	// FIX: Dynamic CORS for Credentials support
+	// Dynamic CORS for Credentials support
 	r.Use(cors.Handler(cors.Options{
 		AllowOriginFunc:  func(r *http.Request, origin string) bool { return true },
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -47,12 +47,12 @@ func (s *Server) routes() chi.Router {
 		MaxAge:           300,
 	}))
 
-	// Public routes
+	// --- Public Routes ---
 	r.Post("/api/auth/register", s.handleRegister)
 	r.Post("/api/auth/login", s.handleLogin)
 	r.Post("/api/auth/verify-2fa", s.handleVerify2FA)
 
-	// Protected routes
+	// --- Protected Routes ---
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 
@@ -105,7 +105,7 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/dkim/records", s.handleListDKIM)
 		r.Post("/api/dkim/generate", s.handleGenerateDKIM)
 
-		// DMARC
+		// DMARC & DNS
 		r.Get("/api/dmarc/{domainID}", s.handleGetDMARC)
 		r.Post("/api/dmarc/{domainID}", s.handleSetDMARC)
 		r.Get("/api/dns/{domainID}", s.handleGetAllDNS)
@@ -129,9 +129,14 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/webhooks/logs", s.handleGetWebhookLogs)
 		r.Post("/api/webhooks/check-bounces", s.handleCheckBounces)
 
-		// NEW: System Actions (Manual triggers for frontend)
-		r.Post("/api/system/check-blacklist", s.handleCheckBlacklist)
-		r.Post("/api/system/check-security", s.handleCheckSecurity)
+		// System Tools & Actions (The Guardian Features)
+		r.Post("/api/system/check-blacklist", s.handleCheckBlacklist) // Manual Trigger
+		r.Post("/api/system/check-security", s.handleCheckSecurity)   // Manual Trigger
+		r.Post("/api/system/action/block-ip", s.handleBlockIP)        // Manual Block
+		r.Post("/api/tools/send-test", s.handleSendTestEmail)         // Test Mail Tool
+
+		// AI Analysis
+		r.Post("/api/system/ai-analyze", s.handleAIAnalyze)
 
 		// Config
 		r.Get("/api/config/preview", s.handlePreviewConfig)
@@ -142,11 +147,10 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/logs/dovecot", s.handleLogsDovecot)
 		r.Get("/api/logs/fail2ban", s.handleLogsFail2ban)
 
-		// System
+		// System Health
 		r.Get("/api/system/health", s.handleSystemHealth)
 		r.Get("/api/system/services", s.handleSystemServices)
 		r.Get("/api/system/ports", s.handleSystemPorts)
-		r.Post("/api/system/ai-analyze", s.handleAIAnalyze)
 
 		// Bulk Import
 		r.Post("/api/import/csv", s.handleCSVImport)
@@ -201,16 +205,4 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	s.Store.DeleteSession(token)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
-}
-
-// --- NEW System Handlers (for frontend buttons) ---
-
-func (s *Server) handleCheckBlacklist(w http.ResponseWriter, r *http.Request) {
-	go s.WS.CheckBlacklists()
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "Blacklist check started. Alerts will be sent via webhook."})
-}
-
-func (s *Server) handleCheckSecurity(w http.ResponseWriter, r *http.Request) {
-	go s.WS.RunSecurityAudit()
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "Security audit started. Alerts will be sent via webhook."})
 }
