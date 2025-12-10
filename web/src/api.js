@@ -99,7 +99,6 @@ export function listDomains() {
 }
 
 export function saveDomain(domain) {
-  // Use PUT for update (id exists), POST for create
   const method = domain.id ? "PUT" : "POST";
   const url = domain.id ? `/domains/${domain.id}` : "/domains";
   return apiRequest(url, { method, body: domain });
@@ -114,7 +113,6 @@ export function listSenders(domainID) {
 }
 
 export function saveSender(domainID, sender) {
-  // Use PUT for update, POST for create
   if (sender.id) {
     return apiRequest(`/senders/${sender.id}`, { method: "PUT", body: sender });
   }
@@ -152,8 +150,6 @@ export function generateDKIM(domain, localPart) {
 export function importSenders(file) {
   const formData = new FormData();
   formData.append("file", file);
-
-  // FIX: Correct backend URL for import
   return fetch(`${API_BASE}/import/csv`, {
     method: "POST",
     headers: {
@@ -187,4 +183,27 @@ export function applyBounces() {
 // Logs
 export function getLogs(service, lines = 100) {
   return apiRequest(`/logs/${service}?lines=${lines}`);
+}
+
+// --- NEW: Tools & Security ---
+export function sendTestEmail(payload) {
+  return apiRequest("/tools/send-test", {
+    method: "POST",
+    body: payload
+  });
+}
+
+export function blockIP(ip) {
+  return apiRequest("/system/action/block-ip", {
+    method: "POST",
+    body: { ip }
+  });
+}
+
+export function checkBlacklist() {
+  return apiRequest("/system/check-blacklist", { method: "POST" });
+}
+
+export function checkSecurity() {
+  return apiRequest("/system/check-security", { method: "POST" });
 }
