@@ -1,104 +1,266 @@
-package api
+package core
 
 import (
-	"net/http"
-	"strconv"
+	"bufio"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/pulak-ranjan/kumomta-ui/internal/core"
+	"github.com/klauspost/compress/zstd"
+	"github.com/pulak-ranjan/kumomta-ui/internal/models"
+	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
 
-// GET /api/stats/domains
-func (s *Server) handleGetDomainStats(w http.ResponseWriter, r *http.Request) {
-	daysStr := r.URL.Query().Get("days")
-	days := 7
-	if d, err := strconv.Atoi(daysStr); err == nil && d > 0 && d <= 90 {
-		days = d
-	}
+// --- CACHING STRUCTURES ---
+var (
+	cacheLock       sync.RWMutex
+	cachedStats     map[string][]DayStats
+	cacheExpiry     time.Time
+	CACHE_DURATION  = 60 * time.Second // Keep data in RAM for 60s
+)
 
-	stats, err := core.GetAllDomainsStats(days)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get stats"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, stats)
+// KumoMTA log entry structure
+type KumoLogEntry struct {
+	Type      string    `json:"type"`
+	Timestamp time.Time `json:"event_time"`
+	Sender    string    `json:"sender"`
+	
+	// NEW: Capture response for AI analysis
+	Response struct {
+		Code    int    `json:"code"`
+		Content string `json:"content"`
+	} `json:"response"`
 }
 
-// GET /api/stats/domains/{domain}
-func (s *Server) handleGetSingleDomainStats(w http.ResponseWriter, r *http.Request) {
-	domain := chi.URLParam(r, "domain")
-	if domain == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "domain required"})
-		return
-	}
+const KumoLogDir = "/var/log/kumomta"
 
-	daysStr := r.URL.Query().Get("days")
-	days := 7
-	if d, err := strconv.Atoi(daysStr); err == nil && d > 0 && d <= 90 {
-		days = d
-	}
+// --- FILE HELPERS ---
 
-	stats, err := core.GetDomainStatsFromLogs(domain, days)
+// openLogFile intelligently handles both Zstd compressed logs and plain JSON logs
+func openLogFile(path string) (io.ReadCloser, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get stats"})
-		return
+		return nil, err
 	}
 
-	writeJSON(w, http.StatusOK, stats)
+	// Peek at the first 4 bytes to check for Zstd magic number (0x28 0xB5 0x2F 0xFD)
+	br := bufio.NewReader(f)
+	magic, _ := br.Peek(4)
+
+	if len(magic) >= 4 && magic[0] == 0x28 && magic[1] == 0xB5 && magic[2] == 0x2F && magic[3] == 0xFD {
+		// It is compressed (Zstd)
+		decoder, err := zstd.NewReader(br)
+		if err != nil {
+			f.Close()
+			return nil, err
+		}
+		return &compressedReader{f: f, d: decoder}, nil
+	}
+
+	// It is plain text (JSON)
+	return &plainReader{f: f, r: br}, nil
 }
 
-// GET /api/stats/summary
-func (s *Server) handleGetStatsSummary(w http.ResponseWriter, r *http.Request) {
-	// Get today's stats
-	stats, err := core.GetAllDomainsStats(1)
+type compressedReader struct {
+	f *os.File
+	d *zstd.Decoder
+}
+func (c *compressedReader) Read(p []byte) (int, error) { return c.d.Read(p) }
+func (c *compressedReader) Close() error { 
+	c.d.Close()
+	return c.f.Close() 
+}
+
+type plainReader struct {
+	f *os.File
+	r *bufio.Reader
+}
+func (p *plainReader) Read(b []byte) (int, error) { return p.r.Read(b) }
+func (p *plainReader) Close() error { return p.f.Close() }
+
+func extractDomain(email string) string {
+	if email == "" { return "" }
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 { return "" }
+	return strings.ToLower(parts[1])
+}
+
+// --- PARALLEL PROCESSING ---
+
+// ParseKumoLogs (Database Sync)
+func ParseKumoLogs(st *store.Store, hoursBack int) error {
+	days := hoursBack / 24
+	if days < 1 { days = 1 }
+
+	stats, err := GetAllDomainsStats(days)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get stats"})
-		return
+		return err
 	}
 
-	summary := struct {
-		TotalSent      int64   `json:"total_sent"`
-		TotalDelivered int64   `json:"total_delivered"`
-		TotalBounced   int64   `json:"total_bounced"`
-		TotalDeferred  int64   `json:"total_deferred"`
-		DeliveryRate   float64 `json:"delivery_rate"`
-		BounceRate     float64 `json:"bounce_rate"`
-		DomainsActive  int     `json:"domains_active"`
-	}{}
+	for domain, daysData := range stats {
+		for _, day := range daysData {
+			parsedDate, _ := time.Parse("2006-01-02", day.Date)
+			dbStat := &models.EmailStats{
+				Domain:    domain,
+				Date:      parsedDate,
+				Sent:      day.Sent,
+				Delivered: day.Delivered,
+				Bounced:   day.Bounced,
+				Deferred:  day.Deferred,
+			}
+			st.SetEmailStats(dbStat)
+		}
+	}
+	return nil
+}
 
-	for _, domainStats := range stats {
-		for _, day := range domainStats {
-			summary.TotalSent += day.Sent
-			summary.TotalDelivered += day.Delivered
-			summary.TotalBounced += day.Bounced
-			summary.TotalDeferred += day.Deferred
+// GetDomainStatsFromLogs (Single Domain)
+func GetDomainStatsFromLogs(domain string, days int) ([]DayStats, error) {
+	all, err := GetAllDomainsStats(days)
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := all[domain]; ok {
+		return d, nil
+	}
+	empty := make([]DayStats, days)
+	now := time.Now()
+	for i := 0; i < days; i++ {
+		empty[i] = DayStats{Date: now.AddDate(0, 0, -(days - 1 - i)).Format("2006-01-02")}
+	}
+	return empty, nil
+}
+
+type DayStats struct {
+	Date      string `json:"date"`
+	Sent      int64  `json:"sent"`
+	Delivered int64  `json:"delivered"`
+	Bounced   int64  `json:"bounced"`
+	Deferred  int64  `json:"deferred"`
+}
+
+// GetAllDomainsStats (Aggregated & Parallel)
+func GetAllDomainsStats(days int) (map[string][]DayStats, error) {
+	cacheLock.RLock()
+	if time.Now().Before(cacheExpiry) && cachedStats != nil {
+		res := cachedStats
+		cacheLock.RUnlock()
+		return res, nil
+	}
+	cacheLock.RUnlock()
+
+	files, _ := filepath.Glob(filepath.Join(KumoLogDir, "*"))
+	now := time.Now()
+	cutoff := now.AddDate(0, 0, -days)
+
+	var mu sync.Mutex
+	tempStats := make(map[string]map[string]*DayStats)
+
+	numWorkers := 50
+	fileChan := make(chan string, len(files))
+	var wg sync.WaitGroup
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for file := range fileChan {
+				processFile(file, cutoff, &mu, tempStats)
+			}
+		}()
+	}
+
+	for _, file := range files {
+		if info, err := os.Stat(file); err == nil && !info.IsDir() {
+			if info.ModTime().After(cutoff) {
+				fileChan <- file
+			}
+		}
+	}
+	close(fileChan)
+	wg.Wait()
+
+	result := make(map[string][]DayStats)
+	for domain, dateMap := range tempStats {
+		daysList := make([]DayStats, 0, len(dateMap))
+		for _, stat := range dateMap {
+			daysList = append(daysList, *stat)
+		}
+		for i := 0; i < len(daysList)-1; i++ {
+			for j := i + 1; j < len(daysList); j++ {
+				if daysList[i].Date > daysList[j].Date {
+					daysList[i], daysList[j] = daysList[j], daysList[i]
+				}
+			}
+		}
+		result[domain] = daysList
+	}
+
+	cacheLock.Lock()
+	cachedStats = result
+	cacheExpiry = time.Now().Add(CACHE_DURATION)
+	cacheLock.Unlock()
+
+	return result, nil
+}
+
+func processFile(file string, cutoff time.Time, mu *sync.Mutex, tempStats map[string]map[string]*DayStats) {
+	rc, err := openLogFile(file)
+	if err != nil { return }
+	defer rc.Close()
+
+	scanner := bufio.NewScanner(rc)
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 5*1024*1024)
+
+	localStats := make(map[string]map[string]*DayStats)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if idx := strings.Index(line, "{"); idx >= 0 {
+			line = line[idx:]
+		} else { continue }
+
+		var entry KumoLogEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil { continue }
+		if entry.Timestamp.Before(cutoff) { continue }
+
+		domain := extractDomain(entry.Sender)
+		if domain == "" { continue }
+
+		dateKey := entry.Timestamp.Format("2006-01-02")
+
+		if localStats[domain] == nil {
+			localStats[domain] = make(map[string]*DayStats)
+		}
+		if localStats[domain][dateKey] == nil {
+			localStats[domain][dateKey] = &DayStats{Date: dateKey}
+		}
+
+		s := localStats[domain][dateKey]
+		switch entry.Type {
+		case "Reception": s.Sent++
+		case "Delivery": s.Delivered++
+		case "Bounce": s.Bounced++
+		case "TransientFailure": s.Deferred++
 		}
 	}
 
-	summary.DomainsActive = len(stats)
-
-	if summary.TotalSent > 0 {
-		summary.DeliveryRate = float64(summary.TotalDelivered) / float64(summary.TotalSent) * 100
-		summary.BounceRate = float64(summary.TotalBounced) / float64(summary.TotalSent) * 100
+	mu.Lock()
+	for dom, days := range localStats {
+		if tempStats[dom] == nil { tempStats[dom] = make(map[string]*DayStats) }
+		for date, stat := range days {
+			if tempStats[dom][date] == nil { tempStats[dom][date] = &DayStats{Date: date} }
+			target := tempStats[dom][date]
+			target.Sent += stat.Sent
+			target.Delivered += stat.Delivered
+			target.Bounced += stat.Bounced
+			target.Deferred += stat.Deferred
+		}
 	}
-
-	writeJSON(w, http.StatusOK, summary)
-}
-
-// POST /api/stats/refresh
-func (s *Server) handleRefreshStats(w http.ResponseWriter, r *http.Request) {
-	hoursStr := r.URL.Query().Get("hours")
-	hours := 24
-	if h, err := strconv.Atoi(hoursStr); err == nil && h > 0 && h <= 168 {
-		hours = h
-	}
-
-	if err := core.ParseKumoLogs(s.Store, hours); err != nil {
-		s.Store.LogError(err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to parse logs"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "refreshed"})
+	mu.Unlock()
 }
