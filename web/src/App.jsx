@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './components/ThemeProvider';
 import { AuthProvider, useAuth } from './AuthContext';
-import Layout from './components/Layout'; // Import new layout
+import Layout from './components/Layout';
 
 // Pages
 import LoginRegister from './pages/LoginRegister';
@@ -19,6 +19,7 @@ import ConfigPage from './pages/ConfigPage';
 import LogsPage from './pages/LogsPage';
 import SecurityPage from './pages/SecurityPage';
 import Settings from './pages/Settings';
+import ToolsPage from './pages/ToolsPage'; // NEW
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="/login" element={<LoginRegister />} />
             
             <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/tools" element={<ProtectedRoute><ToolsPage /></ProtectedRoute>} />
             <Route path="/stats" element={<ProtectedRoute><StatsPage /></ProtectedRoute>} />
             <Route path="/domains" element={<ProtectedRoute><Domains /></ProtectedRoute>} />
             <Route path="/dmarc" element={<ProtectedRoute><DMARCPage /></ProtectedRoute>} />
