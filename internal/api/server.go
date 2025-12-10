@@ -129,7 +129,7 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/webhooks/logs", s.handleGetWebhookLogs)
 		r.Post("/api/webhooks/check-bounces", s.handleCheckBounces)
 
-		// System Tools & Actions (The Guardian Features)
+		// System Tools & Actions (Guardian)
 		r.Post("/api/system/check-blacklist", s.handleCheckBlacklist) // Manual Trigger
 		r.Post("/api/system/check-security", s.handleCheckSecurity)   // Manual Trigger
 		r.Post("/api/system/action/block-ip", s.handleBlockIP)        // Manual Block
