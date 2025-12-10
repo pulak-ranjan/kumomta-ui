@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, BarChart3, Globe, ShieldCheck, Key, MailWarning, Network, 
-  ListOrdered, Webhook, Settings, FileText, Lock, LogOut, Menu, X, ServerCog, Wrench
+  ListOrdered, Webhook, Settings, FileText, Lock, LogOut, Menu, X, ServerCog, Wrench, Thermometer, Lock
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeProvider';
 import { useAuth } from '../AuthContext';
@@ -29,6 +29,8 @@ export default function Layout({ children }) {
     { path: '/logs', icon: FileText, label: 'System Logs' },
     { path: '/security', icon: Lock, label: 'Security' },
     { path: '/settings', icon: Settings, label: 'Settings' },
+    { path: '/warmup', icon: Thermometer, label: 'IP Warmup' },
+    { path: '/apikeys', icon: Lock, label: 'API Keys' },
   ];
 
   const handleLogout = () => {
