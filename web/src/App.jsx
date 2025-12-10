@@ -20,6 +20,8 @@ import LogsPage from './pages/LogsPage';
 import SecurityPage from './pages/SecurityPage';
 import Settings from './pages/Settings';
 import ToolsPage from './pages/ToolsPage'; // NEW
+import WarmupPage from './pages/WarmupPage';
+import APIKeysPage from './pages/APIKeysPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -48,6 +50,8 @@ export default function App() {
             <Route path="/ips" element={<ProtectedRoute><IPsPage /></ProtectedRoute>} />
             <Route path="/queue" element={<ProtectedRoute><QueuePage /></ProtectedRoute>} />
             <Route path="/webhooks" element={<ProtectedRoute><WebhooksPage /></ProtectedRoute>} />
+            <Route path="/warmup" element={<ProtectedRoute><WarmupPage /></ProtectedRoute>} />
+            <Route path="/apikeys" element={<ProtectedRoute><APIKeysPage /></ProtectedRoute>} /> 
             <Route path="/config" element={<ProtectedRoute><ConfigPage /></ProtectedRoute>} />
             <Route path="/logs" element={<ProtectedRoute><LogsPage /></ProtectedRoute>} />
             <Route path="/security" element={<ProtectedRoute><SecurityPage /></ProtectedRoute>} />
