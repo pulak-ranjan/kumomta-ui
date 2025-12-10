@@ -207,3 +207,31 @@ export function checkBlacklist() {
 export function checkSecurity() {
   return apiRequest("/system/check-security", { method: "POST" });
 }
+
+// --- Warmup ---
+export function getWarmupList() {
+  return apiRequest("/warmup");
+}
+
+export function updateWarmup(senderID, enabled, plan) {
+  return apiRequest(`/warmup/${senderID}`, {
+    method: "POST",
+    body: { enabled, plan }
+  });
+}
+
+// --- API Keys ---
+export function listKeys() {
+  return apiRequest("/keys");
+}
+
+export function createKey(name, scopes) {
+  return apiRequest("/keys", {
+    method: "POST",
+    body: { name, scopes }
+  });
+}
+
+export function deleteKey(id) {
+  return apiRequest(`/keys/${id}`, { method: "DELETE" });
+}
