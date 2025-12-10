@@ -15,7 +15,7 @@ import (
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
 
-// WebhookService handles sending notifications
+// WebhookService handles sending notifications to Slack/Discord
 type WebhookService struct {
 	Store *store.Store
 }
@@ -128,7 +128,8 @@ func (ws *WebhookService) SendAuditLog(action, details, user string) error {
 }
 
 // 2. Blacklist Checker
-func (ws *WebhookService) CheckBlacklists() error {
+// If forceReport is true, it sends a webhook even if no issues are found (for manual checks).
+func (ws *WebhookService) CheckBlacklists(forceReport bool) error {
 	ips, err := ws.Store.ListSystemIPs()
 	if err != nil {
 		return err
@@ -141,6 +142,7 @@ func (ws *WebhookService) CheckBlacklists() error {
 	}
 
 	var issues []string
+	checkedCount := 0
 
 	for _, ipObj := range ips {
 		ip := ipObj.Value
@@ -153,14 +155,25 @@ func (ws *WebhookService) CheckBlacklists() error {
 		for _, rbl := range rbls {
 			lookup := fmt.Sprintf("%s.%s", reversedIP, rbl)
 			if result, err := net.LookupHost(lookup); err == nil && len(result) > 0 {
-				issues = append(issues, fmt.Sprintf("IP **%s** listed on **%s**", ip, rbl))
+				issues = append(issues, fmt.Sprintf("❌ IP **%s** listed on **%s**", ip, rbl))
 			}
 		}
+		checkedCount++
 	}
 
+	// Alert if issues found (Priority: Red)
 	if len(issues) > 0 {
-		return ws.sendAlert("🚫 Blacklist Alert", "IPs found on RBLs!", issues, 15158332) // Red
+		return ws.sendAlert("🚫 Blacklist Alert", "The following IPs are blacklisted:", issues, 15158332)
 	}
+
+	// If forced report (manual click) and clean (Priority: Green)
+	if forceReport {
+		return ws.sendAlert("✅ Blacklist Report", 
+			fmt.Sprintf("Scanned %d IPs against %d RBLs.", checkedCount, len(rbls)), 
+			[]string{"All systems clean. No blacklistings detected."}, 
+			3066993)
+	}
+
 	return nil
 }
 
@@ -180,15 +193,15 @@ func (ws *WebhookService) RunSecurityAudit() error {
 		}
 	}
 
-	// Check for Debug Port (8000)
+	// Check for Debug Port (8000) - should be blocked by firewall
 	if conn, err := net.DialTimeout("tcp", "0.0.0.0:8000", 1*time.Second); err == nil {
 		conn.Close()
-		risks = append(risks, "Port 8000 (HTTP) appears open publicly")
+		risks = append(risks, "Port 8000 (HTTP) appears open locally/publicly")
 	}
 
 	settings, _ := ws.Store.GetSettings()
 	if settings != nil && settings.AIAPIKey == "" {
-		risks = append(risks, "AI API Key missing (Features disabled)")
+		risks = append(risks, "AI API Key missing (Log Analysis disabled)")
 	}
 
 	if len(risks) > 0 {
@@ -198,7 +211,6 @@ func (ws *WebhookService) RunSecurityAudit() error {
 }
 
 // 4. Daily Summary
-// FIX: Changed models.DayStats -> DayStats (defined in this package)
 func (ws *WebhookService) SendDailySummary(stats map[string][]DayStats) error {
 	settings, err := ws.Store.GetSettings()
 	if err != nil || settings == nil || !settings.WebhookEnabled || settings.WebhookURL == "" {
