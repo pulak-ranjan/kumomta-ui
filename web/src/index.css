@@ -75,8 +75,18 @@
   body {
     @apply bg-background text-foreground;
   }
-  /* Fix for inputs in light mode */
+  
+  /* FIXED: Enforce high contrast for inputs/boxes in Light Mode */
   input, textarea, select {
-    @apply bg-background text-foreground border-input placeholder:text-muted-foreground;
+    @apply bg-background text-foreground border border-input placeholder:text-muted-foreground shadow-sm;
+  }
+  
+  /* Additional override for light mode readability */
+  :root:not(.dark) input,
+  :root:not(.dark) textarea,
+  :root:not(.dark) select {
+    background-color: #ffffff;
+    color: #0f172a;
+    border-color: #cbd5e1;
   }
 }
