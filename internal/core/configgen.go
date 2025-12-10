@@ -78,7 +78,16 @@ func GenerateQueuesTOML(snap *Snapshot) string {
 			fmt.Fprintf(&b, "[\"%s\"]\n", tenantKey)
 			fmt.Fprintf(&b, "egress_pool = \"%s\"\n", pool)
 			fmt.Fprintf(&b, "retry_interval = \"1m\"\n")
-			fmt.Fprintf(&b, "max_age = \"3d\"\n\n")
+			fmt.Fprintf(&b, "max_age = \"3d\"\n")
+
+			// DYNAMIC WARMUP RATE INJECTION
+			// This calls GetSenderRate which we will define in warmup.go (same package)
+			rate := GetSenderRate(s)
+			if rate != "" {
+				fmt.Fprintf(&b, "max_message_rate = \"%s\"\n", rate)
+			}
+
+			fmt.Fprintf(&b, "\n")
 		}
 	}
 
@@ -106,12 +115,6 @@ func GenerateListenerDomainsTOML(snap *Snapshot) string {
 // =======================
 // dkim_data.toml generator
 // =======================
-//
-// NOTE: This assumes you generate DKIM keys separately and store them
-// under a consistent path, e.g. /opt/kumomta/etc/dkim/<domain>/<localpart>.key
-//
-// This generator only maps sender -> key file.
-//
 
 func GenerateDKIMDataTOML(snap *Snapshot, dkimBasePath string) string {
 	var b strings.Builder
@@ -151,8 +154,6 @@ func GenerateDKIMDataTOML(snap *Snapshot, dkimBasePath string) string {
 // =======================
 
 // GenerateInitLua creates a basic init.lua with HTTP + SMTP listeners.
-// This is still generic; details like ports and relay_ips are fetched
-// from Settings inside Snapshot.
 func GenerateInitLua(snap *Snapshot) string {
 	// Safe defaults if settings are missing
 	mainHostname := "localhost"
@@ -246,15 +247,145 @@ end)
 
 `)
 
-	// NOTE: here we will later include dynamic logic for:
-	// - get_listener_domain
-	// - get_egress_pool
-	// - get_egress_source
-	// - get_queue_config
-	// - DKIM signing
+	b.WriteString("-- Load config files\n")
+	b.WriteString("local sources_data = kumo.toml_load('/opt/kumomta/etc/policy/sources.toml')\n")
+	b.WriteString("local queues_data = kumo.toml_load('/opt/kumomta/etc/policy/queues.toml')\n")
+	b.WriteString("local dkim_data = kumo.toml_load('/opt/kumomta/etc/policy/dkim_data.toml')\n")
+	b.WriteString("local listener_domains = kumo.toml_load('/opt/kumomta/etc/policy/listener_domains.toml')\n\n")
 
-	b.WriteString("-- TODO: load TOML files (sources, queues, dkim_data, listener_domains)\n")
-	b.WriteString("-- and define the rest of policy callbacks here.\n")
+	b.WriteString(`
+local function get_tenant_from_sender(sender_email)
+  -- In this simplified model, we don't have the exact mapping in Lua.
+  -- Instead, we rely on the fact that we named our pools "domain-localpart".
+  -- We'll try to reconstruct the pool name from the sender email.
+  if sender_email then
+    local localpart, domain = sender_email:match("([^@]+)@(.+)")
+    if localpart and domain then
+      return domain .. "-" .. localpart
+    end
+  end
+  return "default"
+end
+
+kumo.on('get_listener_domain', function(domain, listener, conn_meta)
+  if listener_domains[domain] then
+    local config = listener_domains[domain]
+    return kumo.make_listener_domain {
+      relay_to = config.relay_to or false,
+      log_oob = config.log_oob or false,
+      log_arf = config.log_arf or false,
+    }
+  end
+  return kumo.make_listener_domain { relay_to = false }
+end)
+
+kumo.on('get_egress_pool', function(pool_name)
+  -- Check if a source exists that matches the pool name logic
+  -- We named source "domain:localpart" and pool "domain-localpart"
+  -- Let's check if we have a matching source key by replacing - with :
+  local source_key = pool_name:gsub("-", ":", 1)
+  
+  if sources_data[source_key] then
+     return kumo.make_egress_pool {
+       name = pool_name,
+       entries = { { name = source_key } },
+     }
+  end
+  
+  return kumo.make_egress_pool { name = pool_name, entries = {} }
+end)
+
+kumo.on('get_egress_source', function(source_name)
+  if sources_data[source_name] then
+    local config = sources_data[source_name]
+    return kumo.make_egress_source {
+      name = source_name,
+      source_address = config.source_address,
+      ehlo_domain = config.ehlo_domain,
+    }
+  end
+  return kumo.make_egress_source { name = source_name }
+end)
+
+kumo.on('get_egress_path_config', function(domain, egress_source, site_name)
+  return kumo.make_egress_path {
+    enable_tls = 'OpportunisticInsecure',
+    enable_mta_sts = false,
+  }
+end)
+
+kumo.on('get_queue_config', function(domain, tenant, campaign, routing_domain)
+  local tenant_key = 'tenant:' .. tenant
+  local tenant_config = queues_data[tenant_key] or {}
+
+  local params = {
+    egress_pool = tenant_config.egress_pool or tenant,
+    retry_interval = tenant_config.retry_interval or '1m',
+    max_age = tenant_config.max_age or '3d',
+    max_message_rate = tenant_config.max_message_rate, -- This picks up our warmup injection
+  }
+
+  return kumo.make_queue_config(params)
+end)
+
+local function sign_with_dkim(msg)
+  local sender = msg:from_header()
+  if not sender then return end
+  
+  local sender_email = sender.email:lower()
+  local sender_domain = sender.domain:lower()
+
+  local domain_key = 'domain.' .. sender_domain
+  local domain_config = dkim_data[domain_key]
+
+  if not domain_config then return end
+
+  if domain_config.policy then
+    for _, policy in ipairs(domain_config.policy) do
+      if policy.match_sender and sender_email == policy.match_sender:lower() then
+        local signer = kumo.dkim.rsa_sha256_signer {
+          domain = sender_domain,
+          selector = policy.selector,
+          headers = domain_config.headers or { 'From', 'To', 'Subject', 'Date', 'Message-ID' },
+          key = { key_file = policy.filename },
+        }
+        msg:dkim_sign(signer)
+        return
+      end
+    end
+  end
+end
+
+kumo.on('smtp_server_message_received', function(msg)
+  local sender = msg:from_header()
+  local sender_email = sender and sender.email or ""
+
+  local tenant = get_tenant_from_sender(sender_email)
+  msg:set_meta('tenant', tenant)
+
+  local campaign = msg:get_first_named_header_value('X-Campaign')
+  if campaign then msg:set_meta('campaign', campaign) end
+
+  msg:remove_x_headers { 'x-campaign', 'x-tenant' }
+  sign_with_dkim(msg)
+end)
+
+kumo.on('http_message_generated', function(msg)
+  local tenant = msg:get_first_named_header_value('X-Tenant')
+  if not tenant then
+    local sender = msg:from_header()
+    local sender_email = sender and sender.email or ""
+    tenant = get_tenant_from_sender(sender_email)
+  end
+  msg:set_meta('tenant', tenant)
+  
+  local campaign = msg:get_first_named_header_value('X-Campaign')
+  if campaign then msg:set_meta('campaign', campaign) end
+
+  msg:remove_x_headers { 'x-campaign', 'x-tenant' }
+  sign_with_dkim(msg)
+end)
+`)
 
 	return b.String()
 }
