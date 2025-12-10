@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, BarChart3, Globe, ShieldCheck, Key, MailWarning, Network, 
-  ListOrdered, Webhook, Settings, FileText, Lock, LogOut, Menu, X, ServerCog, Wrench, Thermometer, Lock
+  ListOrdered, Webhook, Settings, FileText, Lock, LogOut, Menu, X, ServerCog, 
+  Wrench, Thermometer 
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeProvider';
 import { useAuth } from '../AuthContext';
@@ -16,9 +17,11 @@ export default function Layout({ children }) {
 
   const links = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
-    { path: '/tools', icon: Wrench, label: 'System Tools' }, // NEW
+    { path: '/tools', icon: Wrench, label: 'System Tools' },
     { path: '/stats', icon: BarChart3, label: 'Statistics' },
     { path: '/domains', icon: Globe, label: 'Domains' },
+    { path: '/warmup', icon: Thermometer, label: 'IP Warmup' }, // Uses Thermometer
+    { path: '/apikeys', icon: Key, label: 'API Keys' }, // Changed icon to Key (fits better than Lock)
     { path: '/dmarc', icon: ShieldCheck, label: 'DMARC' },
     { path: '/dkim', icon: Key, label: 'DKIM' },
     { path: '/bounce', icon: MailWarning, label: 'Bounce' },
@@ -27,10 +30,8 @@ export default function Layout({ children }) {
     { path: '/webhooks', icon: Webhook, label: 'Webhooks' },
     { path: '/config', icon: ServerCog, label: 'Config Gen' },
     { path: '/logs', icon: FileText, label: 'System Logs' },
-    { path: '/security', icon: Lock, label: 'Security' },
+    { path: '/security', icon: Lock, label: 'Security' }, // Uses Lock
     { path: '/settings', icon: Settings, label: 'Settings' },
-    { path: '/warmup', icon: Thermometer, label: 'IP Warmup' },
-    { path: '/apikeys', icon: Lock, label: 'API Keys' },
   ];
 
   const handleLogout = () => {
@@ -58,6 +59,7 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen bg-background flex flex-col md:flex-row">
+      {/* Mobile Header */}
       <div className="md:hidden border-b bg-card flex items-center justify-between p-4 sticky top-0 z-30">
         <div className="font-bold text-lg flex items-center gap-2">
           <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold">K</div>
@@ -68,6 +70,7 @@ export default function Layout({ children }) {
         </button>
       </div>
 
+      {/* Sidebar */}
       <aside className={cn(
         "fixed inset-y-0 left-0 z-40 w-64 bg-card border-r transform transition-transform duration-300 ease-in-out md:translate-x-0 md:static md:h-screen flex flex-col",
         isMobileOpen ? "translate-x-0" : "-translate-x-full"
@@ -79,11 +82,13 @@ export default function Layout({ children }) {
             <div className="text-xs text-muted-foreground">Admin Panel</div>
           </div>
         </div>
+
         <nav className="flex-1 overflow-y-auto p-4 space-y-1">
           {links.map((link) => (
             <NavItem key={link.path} link={link} onClick={() => setIsMobileOpen(false)} />
           ))}
         </nav>
+
         <div className="p-4 border-t space-y-4">
           <div className="flex items-center justify-between px-2">
             <span className="text-xs font-medium text-muted-foreground">Theme</span>
@@ -95,10 +100,12 @@ export default function Layout({ children }) {
         </div>
       </aside>
 
+      {/* Main Content */}
       <main className="flex-1 overflow-auto h-[calc(100vh-65px)] md:h-screen bg-muted/20">
         <div className="p-4 md:p-8 max-w-7xl mx-auto">{children}</div>
       </main>
 
+      {/* Mobile Overlay */}
       {isMobileOpen && <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-30 md:hidden" onClick={() => setIsMobileOpen(false)} />}
     </div>
   );
