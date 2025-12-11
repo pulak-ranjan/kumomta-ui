@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Bot, Send, X, MessageSquare, Loader2, Terminal } from "lucide-react";
+import { Bot, Send, X, MessageSquare, Loader2 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { sendAIChat } from "../api";
 import { cn } from "../lib/utils";
 
@@ -7,7 +8,7 @@ export default function AIAssistant() {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([
-    { role: "assistant", content: "Hello! I'm your KumoMTA Agent. I can check logs, queues, and documentation. How can I help?" }
+    { role: "assistant", content: "Hello! I'm your KumoMTA Agent. I can manage logs, Dovecot, and config. How can I help?" }
   ]);
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef(null);
@@ -30,7 +31,6 @@ export default function AIAssistant() {
     setLoading(true);
 
     try {
-      // Send entire history for context
       const res = await sendAIChat(newHistory);
       setMessages([...newHistory, { role: "assistant", content: res.reply }]);
     } catch (err) {
@@ -43,7 +43,7 @@ export default function AIAssistant() {
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-4">
       {isOpen && (
-        <div className="w-[380px] h-[500px] bg-card border border-border rounded-xl shadow-2xl flex flex-col animate-in slide-in-from-bottom-5 fade-in duration-200 overflow-hidden">
+        <div className="w-[380px] h-[550px] bg-card border border-border rounded-xl shadow-2xl flex flex-col animate-in slide-in-from-bottom-5 fade-in duration-200 overflow-hidden">
           {/* Header */}
           <div className="p-3 border-b bg-primary/5 flex justify-between items-center">
             <div className="flex items-center gap-2">
@@ -67,12 +67,29 @@ export default function AIAssistant() {
                   </div>
                 )}
                 <div className={cn(
-                  "p-3 rounded-lg max-w-[85%] whitespace-pre-wrap leading-relaxed shadow-sm",
+                  "p-3 rounded-lg max-w-[85%] shadow-sm",
                   m.role === "user" 
                     ? "bg-primary text-primary-foreground rounded-tr-none" 
                     : "bg-card border text-card-foreground rounded-tl-none"
                 )}>
-                  {m.content}
+                  {/* Markdown Renderer */}
+                  <ReactMarkdown 
+                    className="prose dark:prose-invert prose-sm max-w-none break-words"
+                    components={{
+                      code: ({node, inline, className, children, ...props}) => (
+                        <code className={cn("bg-black/20 rounded px-1", className)} {...props}>
+                          {children}
+                        </code>
+                      ),
+                      pre: ({node, children, ...props}) => (
+                        <pre className="bg-black/20 p-2 rounded overflow-x-auto text-xs my-2" {...props}>
+                          {children}
+                        </pre>
+                      )
+                    }}
+                  >
+                    {m.content}
+                  </ReactMarkdown>
                 </div>
               </div>
             ))}
@@ -81,7 +98,7 @@ export default function AIAssistant() {
                 <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                   <Loader2 className="w-3 h-3 text-primary animate-spin" />
                 </div>
-                <div className="text-muted-foreground text-xs py-2 italic">Analyzing logs and docs...</div>
+                <div className="text-muted-foreground text-xs py-2 italic">Working on it...</div>
               </div>
             )}
           </div>
@@ -92,7 +109,7 @@ export default function AIAssistant() {
               <input
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                placeholder="Ask about errors or config..."
+                placeholder="Check status, logs, or config..."
                 className="w-full bg-muted/50 border-0 rounded-md h-10 pl-3 pr-10 text-sm focus:ring-1 focus:ring-primary"
               />
               <button 
