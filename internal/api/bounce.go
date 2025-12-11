@@ -158,6 +158,21 @@ func (s *Server) handleDeleteBounceAccount(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// 1. Get the account first so we know the username
+	account, err := s.Store.GetBounceAccountByID(uint(id))
+	if err != nil {
+		// If not found in DB, just return success or not found
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "account not found"})
+		return
+	}
+
+	// 2. Delete from System (OS)
+	if err := core.RemoveSystemUser(account.Username); err != nil {
+		// Log error but continue to delete from DB so they aren't stuck
+		s.Store.LogError(err)
+	}
+
+	// 3. Delete from Database
 	if err := s.Store.DeleteBounceAccount(uint(id)); err != nil {
 		s.Store.LogError(err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete bounce account"})
