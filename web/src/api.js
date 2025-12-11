@@ -84,6 +84,14 @@ export function getAIInsights() {
   });
 }
 
+// --- NEW: Chat Agent ---
+export function sendAIChat(messages) {
+  return apiRequest("/ai/chat", {
+    method: "POST",
+    body: { messages }
+  });
+}
+
 // Settings
 export function getSettings() {
   return apiRequest("/settings");
