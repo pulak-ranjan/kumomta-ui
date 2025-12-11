@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { MailWarning, Filter, Trash2, User, Globe, AlertCircle } from "lucide-react";
-import { listBounces, listDomains } from "../api";
+import { MailWarning, Filter, Trash2, User, Globe, AlertCircle, Key, Edit2, X, Save, Loader2 } from "lucide-react";
+import { listBounces, listDomains, deleteBounce, saveBounce } from "../api";
 import { cn } from "../lib/utils";
 
 export default function BouncePage() {
@@ -9,6 +9,11 @@ export default function BouncePage() {
   const [filter, setFilter] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(true);
+  
+  // Edit State
+  const [editing, setEditing] = useState(null);
+  const [passForm, setPassForm] = useState({ password: "", notes: "" });
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => { load(); }, []);
 
@@ -23,6 +28,46 @@ export default function BouncePage() {
       setList([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id, username) => {
+    if (!confirm(`Delete bounce account "${username}"?\nThis will remove the system user and all bounce emails.`)) return;
+    try {
+      await deleteBounce(id);
+      load();
+    } catch (err) {
+      setMsg(err.message || "Failed to delete");
+    }
+  };
+
+  const openEdit = (account) => {
+    setEditing(account);
+    setPassForm({ password: "", notes: account.notes || "" });
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      // Send update (ID exists, so backend treats as update)
+      // Only send password if user typed one
+      const payload = {
+        id: editing.id,
+        username: editing.username,
+        domain: editing.domain,
+        notes: passForm.notes,
+        password: passForm.password || undefined 
+      };
+      
+      await saveBounce(payload);
+      setEditing(null);
+      setMsg("Account updated successfully");
+      load();
+    } catch (err) {
+      setMsg(err.message || "Failed to update");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -49,6 +94,8 @@ export default function BouncePage() {
         </div>
       </div>
 
+      {msg && <div className="bg-blue-500/10 text-blue-600 p-3 rounded-md text-sm">{msg}</div>}
+
       {loading ? (
         <div className="text-center py-12 text-muted-foreground">Loading accounts...</div>
       ) : filteredList.length === 0 ? (
@@ -65,13 +112,26 @@ export default function BouncePage() {
                 <div className="p-2 bg-purple-500/10 text-purple-500 rounded-lg">
                   <User className="w-5 h-5" />
                 </div>
-                <button className="text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button 
+                    onClick={() => openEdit(b)}
+                    className="p-1.5 text-muted-foreground hover:text-primary hover:bg-muted rounded-md"
+                    title="Edit Password/Notes"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => handleDelete(b.id, b.username)}
+                    className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md"
+                    title="Delete Account"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
               
               <div className="space-y-1">
-                <div className="font-mono font-medium text-lg">{b.username}</div>
+                <div className="font-mono font-medium text-lg truncate" title={b.username}>{b.username}</div>
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Globe className="w-3 h-3" />
                   {b.domain}
@@ -86,6 +146,63 @@ export default function BouncePage() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {editing && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-card w-full max-w-md border rounded-lg shadow-lg p-6 space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-semibold">Edit Bounce Account</h3>
+              <button onClick={() => setEditing(null)}><X className="w-4 h-4" /></button>
+            </div>
+            
+            <div className="p-3 bg-muted rounded-md text-sm space-y-1">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Username:</span>
+                <span className="font-mono">{editing.username}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Domain:</span>
+                <span>{editing.domain}</span>
+              </div>
+            </div>
+
+            <form onSubmit={handleSave} className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">New Password</label>
+                <div className="relative">
+                  <Key className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <input 
+                    type="password"
+                    className="w-full pl-9 h-10 rounded-md border bg-background px-3 text-sm" 
+                    value={passForm.password}
+                    onChange={e => setPassForm({...passForm, password: e.target.value})}
+                    placeholder="Leave blank to keep current"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Notes</label>
+                <textarea 
+                  className="w-full rounded-md border bg-background p-3 text-sm h-20 resize-none"
+                  value={passForm.notes}
+                  onChange={e => setPassForm({...passForm, notes: e.target.value})}
+                  placeholder="Optional notes..."
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setEditing(null)} className="px-4 py-2 text-sm rounded-md hover:bg-muted">Cancel</button>
+                <button type="submit" disabled={busy} className="flex items-center gap-2 px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90">
+                  {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
