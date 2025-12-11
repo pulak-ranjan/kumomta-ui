@@ -70,6 +70,28 @@ func EnsureBounceAccount(acc models.BounceAccount, plainPassword string) error {
 	return nil
 }
 
+// RemoveSystemUser deletes the linux user and their home directory
+func RemoveSystemUser(username string) error {
+	// Security check on username format
+	validUsername := regexp.MustCompile(`^[a-z0-9_-]+$`)
+	if !validUsername.MatchString(username) {
+		return fmt.Errorf("invalid username format")
+	}
+
+	// Check if user exists first
+	if err := exec.Command("id", username).Run(); err != nil {
+		return nil // User doesn't exist, nothing to do
+	}
+
+	// userdel -r username (removes home dir/maildir)
+	cmd := exec.Command("userdel", "-r", username)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to delete user %s: %s", username, string(out))
+	}
+
+	return nil
+}
+
 // ApplyAllBounceAccounts ensures all stored bounce accounts exist on system.
 // It does NOT change passwords (plain password is not stored).
 func ApplyAllBounceAccounts(accounts []models.BounceAccount) error {
