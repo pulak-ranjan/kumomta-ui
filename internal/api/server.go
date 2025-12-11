@@ -134,14 +134,15 @@ func (s *Server) routes() chi.Router {
 		r.Post("/api/system/action/block-ip", s.handleBlockIP)
 		r.Post("/api/tools/send-test", s.handleSendTestEmail)
 
-		// AI Analysis
-		r.Post("/api/system/ai-analyze", s.handleAIAnalyze)
+		// AI Chat & Analysis
+		r.Post("/api/system/ai-analyze", s.handleAIAnalyze) // Deprecated but kept
+		r.Post("/api/ai/chat", s.handleAIChat)              // NEW Agent endpoint
 
-		// --- NEW: Warmup Routes ---
+		// Warmup Routes
 		r.Get("/api/warmup", s.handleGetWarmupList)
 		r.Post("/api/warmup/{id}", s.handleUpdateWarmup)
 
-		// --- NEW: API Keys Routes ---
+		// API Keys Routes
 		r.Get("/api/keys", s.handleListKeys)
 		r.Post("/api/keys", s.handleCreateKey)
 		r.Delete("/api/keys/{id}", s.handleDeleteKey)
