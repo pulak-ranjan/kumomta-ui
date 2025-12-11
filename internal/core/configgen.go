@@ -155,13 +155,20 @@ func GenerateDKIMDataTOML(snap *Snapshot, dkimBasePath string) string {
 
 // GenerateInitLua creates a basic init.lua with HTTP + SMTP listeners.
 func GenerateInitLua(snap *Snapshot) string {
-	// Safe defaults if settings are missing
+	// Safe defaults
 	mainHostname := "localhost"
 	relayIPs := []string{"127.0.0.1"}
+	
+	// SECURITY: Default to localhost only. 
+	// To open to the world, user must set SMTPListenAddr in Settings.
+	listenAddr := "127.0.0.1:25"
 
 	if snap.Settings != nil {
 		if snap.Settings.MainHostname != "" {
 			mainHostname = snap.Settings.MainHostname
+		}
+		if snap.Settings.SMTPListenAddr != "" {
+			listenAddr = snap.Settings.SMTPListenAddr
 		}
 		if snap.Settings.MailWizzIP != "" {
 			// MailWizzIP is actually generic "relay IPs" CSV
@@ -216,12 +223,19 @@ kumo.on('init', function()
     trusted_hosts = { '127.0.0.1' },
   }
 
+  -- SMTP Listener
+  -- Secured by relay_hosts list below.
   kumo.start_esmtp_listener {
-    listen = '0.0.0.0:25',
+    listen = '`)
+	b.WriteString(listenAddr) // DYNAMIC LISTENER
+	b.WriteString(`',
     hostname = '`)
 	b.WriteString(mainHostname)
 	b.WriteString(`',
-    relay_hosts = { '127.0.0.1' },
+    -- Only these IPs are allowed to relay outbound mail
+    relay_hosts = { `)
+	b.WriteString(relayListStr)
+	b.WriteString(` },
   }
 
   kumo.start_esmtp_listener {
@@ -255,9 +269,6 @@ end)
 
 	b.WriteString(`
 local function get_tenant_from_sender(sender_email)
-  -- In this simplified model, we don't have the exact mapping in Lua.
-  -- Instead, we rely on the fact that we named our pools "domain-localpart".
-  -- We'll try to reconstruct the pool name from the sender email.
   if sender_email then
     local localpart, domain = sender_email:match("([^@]+)@(.+)")
     if localpart and domain then
@@ -280,9 +291,6 @@ kumo.on('get_listener_domain', function(domain, listener, conn_meta)
 end)
 
 kumo.on('get_egress_pool', function(pool_name)
-  -- Check if a source exists that matches the pool name logic
-  -- We named source "domain:localpart" and pool "domain-localpart"
-  -- Let's check if we have a matching source key by replacing - with :
   local source_key = pool_name:gsub("-", ":", 1)
   
   if sources_data[source_key] then
@@ -322,7 +330,7 @@ kumo.on('get_queue_config', function(domain, tenant, campaign, routing_domain)
     egress_pool = tenant_config.egress_pool or tenant,
     retry_interval = tenant_config.retry_interval or '1m',
     max_age = tenant_config.max_age or '3d',
-    max_message_rate = tenant_config.max_message_rate, -- This picks up our warmup injection
+    max_message_rate = tenant_config.max_message_rate,
   }
 
   return kumo.make_queue_config(params)
