@@ -52,7 +52,7 @@ fi
 # Base dependencies
 # --------------------------
 echo "[*] Installing base dependencies (git, Go, firewalld, epel-release, dnf-plugins-core, SELinux tools)..."
-dnf install -y git golang firewalld epel-release dnf-plugins-core policycoreutils-python-utils curl
+dnf install -y git golang firewalld epel-release dnf-plugins-core policycoreutils-python-utils curl bind-utils
 
 # Make sure firewalld is running
 systemctl enable --now firewalld || true
@@ -121,6 +121,27 @@ fi
 echo "[*] Ensuring KumoMTA directories exist..."
 mkdir -p /opt/kumomta/etc/policy
 mkdir -p /opt/kumomta/etc/dkim
+
+# --------------------------
+# Install Documentation (For AI Agent)
+# --------------------------
+echo "[*] Fetching KumoMTA documentation for AI Agent..."
+# Clean up any existing folders to prevent conflicts
+rm -rf "$PANEL_DIR/docs-temp" "$PANEL_DIR/docs"
+
+# 1. Clone the FULL repo to a temp folder named "docs-temp"
+git clone --depth 1 https://github.com/KumoCorp/kumomta.git "$PANEL_DIR/docs-temp"
+
+# 2. Move ONLY the "docs" folder from inside the temp folder to our app root
+if [ -d "$PANEL_DIR/docs-temp/docs" ]; then
+    mv "$PANEL_DIR/docs-temp/docs" "$PANEL_DIR/docs"
+    echo "[*] Documentation successfully installed to $PANEL_DIR/docs"
+else
+    echo "[!] Warning: 'docs' folder not found in the cloned repository."
+fi
+
+# 3. Delete the temp folder and the rest of the repo files
+rm -rf "$PANEL_DIR/docs-temp"
 
 # --------------------------
 # Build Go backend
