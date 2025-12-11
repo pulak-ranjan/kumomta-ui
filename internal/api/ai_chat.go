@@ -31,8 +31,8 @@ var allowedTools = map[string]string{
 	"queue":       "Check Queue Summary",
 	"version":     "Check KumoMTA Version",
 	"dig":         "Perform DNS Lookup (dig)",
-	"logs_kumo":   "Get recent KumoMTA Logs",
-	"logs_error":  "Get recent Error Logs",
+	"logs_kumo":   "Get recent KumoMTA Logs (last 20 lines)",
+	"logs_error":  "Get recent Error Logs (last 20 lines)",
 }
 
 // POST /api/ai/chat
@@ -49,13 +49,14 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Gather System Context (Live Logs snapshot)
+	// 1. Gather System Context (Live Logs snapshot) - Last 30 lines
 	cmd := exec.Command("journalctl", "-u", "kumomta", "-n", "30", "--no-pager")
 	logOut, _ := cmd.CombinedOutput()
 
 	// 2. Gather Knowledge Base (Docs)
-	// Reads from the /docs folder cloned by the installer
-	docsContext := loadLocalDocs("docs", 6000) // Limit to 6KB to save tokens
+	// Reads from the /docs folder cloned by the installer. 
+	// We limit the total characters to avoid exceeding token limits.
+	docsContext := loadLocalDocs("docs", 6000) 
 
 	// 3. Construct System Persona & Prompt
 	toolsDesc := ""
@@ -82,23 +83,23 @@ Last 30 Log Lines:
 %s
 
 INSTRUCTIONS:
-- If the user asks about an error, CROSS-REFERENCE the logs with the Documentation.
+- If the user asks about an error, CROSS-REFERENCE the logs with the provided Documentation snippets.
 - Be concise but technical.
 - If you run a command, mention it in your text.
-- NEVER suggest or attempt destructive commands (rm, kill, stop).
+- NEVER suggest or attempt destructive commands (rm, kill, stop, reboot).
 `, toolsDesc, string(logOut), docsContext)
 
-	// Prepend system prompt
+	// Prepend system prompt to the conversation history
 	finalMessages := append([]ChatMessage{{Role: "system", Content: systemPrompt}}, req.Messages...)
 
-	// 4. Call AI
+	// 4. Call AI Provider
 	rawReply, err := s.sendToAI(settings.AIProvider, settings.AIAPIKey, finalMessages)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
-	// 5. Check for Tool Execution Tags
+	// 5. Check for Tool Execution Tags in the AI response
 	reply, toolOutput := s.processToolExecution(rawReply)
 	if toolOutput != "" {
 		reply += fmt.Sprintf("\n\n[System Output]\n%s", toolOutput)
@@ -119,8 +120,10 @@ func (s *Server) processToolExecution(response string) (string, string) {
 			args = strings.TrimSpace(matches[2])
 		}
 
-		// Clean the tag from the user-facing reply
+		// Clean the tag from the user-facing reply so they don't see the raw tag
 		cleanReply := strings.Replace(response, matches[0], "", -1)
+		
+		// Run the tool
 		output := s.runSafeTool(cmdName, args)
 		return cleanReply, output
 	}
@@ -147,10 +150,10 @@ func (s *Server) runSafeTool(cmdName, args string) string {
 		return string(out)
 
 	case "dig":
-		// Validate domain to prevent injection
+		// Validate domain strictly to prevent shell injection
 		validDomain := regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
 		if !validDomain.MatchString(args) {
-			return "Invalid domain format."
+			return "Invalid domain format. Only alphanumeric, dots, and dashes allowed."
 		}
 		out, _ := exec.Command("dig", "+short", "MX", args).CombinedOutput()
 		return fmt.Sprintf("MX Records for %s:\n%s", args, string(out))
@@ -168,7 +171,7 @@ func (s *Server) runSafeTool(cmdName, args string) string {
 	}
 }
 
-// Helper to send to AI
+// Helper to send chat context to OpenAI/DeepSeek
 func (s *Server) sendToAI(provider, key string, messages []ChatMessage) (string, error) {
 	url := "https://api.openai.com/v1/chat/completions"
 	model := "gpt-3.5-turbo"
@@ -177,6 +180,7 @@ func (s *Server) sendToAI(provider, key string, messages []ChatMessage) (string,
 		model = "deepseek-chat"
 	}
 
+	// Convert struct to map for JSON marshalling
 	payloadMsgs := make([]map[string]string, len(messages))
 	for i, m := range messages {
 		payloadMsgs[i] = map[string]string{"role": m.Role, "content": m.Content}
@@ -216,10 +220,10 @@ func (s *Server) sendToAI(provider, key string, messages []ChatMessage) (string,
 			}
 		}
 	}
-	return "No response.", nil
+	return "No response from AI.", nil
 }
 
-// loadLocalDocs reads MD files from ./docs/
+// loadLocalDocs reads .md files from the ./docs/ folder
 func loadLocalDocs(dir string, limit int) string {
 	var sb strings.Builder
 	totalLen := 0
@@ -228,26 +232,32 @@ func loadLocalDocs(dir string, limit int) string {
 		if err != nil { return nil }
 		if !info.IsDir() && strings.HasSuffix(info.Name(), ".md") {
 			content, _ := os.ReadFile(path)
-			if totalLen+len(content) > limit {
+			
+			// Simple check to stop if we have too much context
+			if totalLen > limit {
 				return filepath.SkipAll
 			}
+
 			sb.WriteString(fmt.Sprintf("\n--- DOC: %s ---\n", info.Name()))
-			// Basic cleanup to save tokens
+			
+			// Basic cleanup: reduce multiple newlines to save tokens
 			text := string(content)
 			text = strings.ReplaceAll(text, "\n\n", "\n") 
-			sb.WriteString(text[:min(len(text), 1000)]) // Take first 1000 chars of each file
-			totalLen += len(text)
+			
+			// Take the first 1500 chars of each file to get a good spread of topics
+			excerptLen := 1500
+			if len(text) < excerptLen {
+				excerptLen = len(text)
+			}
+			
+			sb.WriteString(text[:excerptLen])
+			totalLen += excerptLen
 		}
 		return nil
 	})
 	
 	if totalLen == 0 {
-		return "No local docs found. The agent will rely on general knowledge."
+		return "No local documentation found in ./docs/. The agent will rely on general knowledge."
 	}
 	return sb.String()
-}
-
-func min(a, b int) int {
-	if a < b { return a }
-	return b
 }
