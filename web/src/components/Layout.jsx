@@ -8,6 +8,7 @@ import {
 import { ThemeToggle } from './ThemeProvider';
 import { useAuth } from '../AuthContext';
 import { cn } from '../lib/utils';
+import AIAssistant from './AIAssistant'; // Imported Agent
 
 export default function Layout({ children }) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
@@ -20,8 +21,8 @@ export default function Layout({ children }) {
     { path: '/tools', icon: Wrench, label: 'System Tools' },
     { path: '/stats', icon: BarChart3, label: 'Statistics' },
     { path: '/domains', icon: Globe, label: 'Domains' },
-    { path: '/warmup', icon: Thermometer, label: 'IP Warmup' }, // Uses Thermometer
-    { path: '/apikeys', icon: Key, label: 'API Keys' }, // Changed icon to Key (fits better than Lock)
+    { path: '/warmup', icon: Thermometer, label: 'IP Warmup' },
+    { path: '/apikeys', icon: Key, label: 'API Keys' },
     { path: '/dmarc', icon: ShieldCheck, label: 'DMARC' },
     { path: '/dkim', icon: Key, label: 'DKIM' },
     { path: '/bounce', icon: MailWarning, label: 'Bounce' },
@@ -30,7 +31,7 @@ export default function Layout({ children }) {
     { path: '/webhooks', icon: Webhook, label: 'Webhooks' },
     { path: '/config', icon: ServerCog, label: 'Config Gen' },
     { path: '/logs', icon: FileText, label: 'System Logs' },
-    { path: '/security', icon: Lock, label: 'Security' }, // Uses Lock
+    { path: '/security', icon: Lock, label: 'Security' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ];
 
@@ -101,8 +102,11 @@ export default function Layout({ children }) {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto h-[calc(100vh-65px)] md:h-screen bg-muted/20">
+      <main className="flex-1 overflow-auto h-[calc(100vh-65px)] md:h-screen bg-muted/20 relative">
         <div className="p-4 md:p-8 max-w-7xl mx-auto">{children}</div>
+        
+        {/* The Agent is mounted here */}
+        <AIAssistant />
       </main>
 
       {/* Mobile Overlay */}
