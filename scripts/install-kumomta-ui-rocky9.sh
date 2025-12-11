@@ -11,6 +11,7 @@ fi
 PANEL_DIR="/opt/kumomta-ui"
 BIN_NAME="kumomta-ui-server"
 BIN_PATH="$PANEL_DIR/$BIN_NAME"
+MIGRATE_BIN="$PANEL_DIR/kumomta-ui-migrate"
 DB_DIR="/var/lib/kumomta-ui"
 SERVICE_FILE="/etc/systemd/system/kumomta-ui.service"
 NGINX_CONF="/etc/nginx/conf.d/kumomta-ui.conf"
@@ -51,8 +52,10 @@ fi
 # --------------------------
 # Base dependencies
 # --------------------------
-echo "[*] Installing base dependencies (git, Go, firewalld, epel-release, dnf-plugins-core, SELinux tools)..."
-dnf install -y git golang firewalld epel-release dnf-plugins-core policycoreutils-python-utils curl bind-utils
+echo "[*] Installing base dependencies..."
+# Added 'swaks' here (requires epel-release installed first or simultaneously)
+dnf install -y epel-release
+dnf install -y git golang firewalld dnf-plugins-core policycoreutils-python-utils curl bind-utils swaks
 
 # Make sure firewalld is running
 systemctl enable --now firewalld || true
@@ -66,31 +69,22 @@ systemctl disable --now postfix 2>/dev/null || true
 # --------------------------
 echo "[*] Installing Dovecot and Fail2ban..."
 dnf install -y dovecot fail2ban fail2ban-firewalld || true
-
-echo "[*] Enabling Fail2ban (recommended for security)..."
 systemctl enable --now fail2ban 2>/dev/null || true
-
-echo "[*] Enabling Dovecot (IMAP/POP3)..."
 systemctl enable --now dovecot 2>/dev/null || true
 
 # --------------------------
-# Configure Firewall (Mail Services)
+# Configure Firewall
 # --------------------------
-echo "[*] Configuring firewall for Mail & IMAP..."
-# Open SMTP ports for KumoMTA (Receive & Submit)
+echo "[*] Configuring firewall..."
 firewall-cmd --permanent --add-port=25/tcp
 firewall-cmd --permanent --add-port=587/tcp
 firewall-cmd --permanent --add-port=465/tcp
-
-# Open IMAP ports for Dovecot (Read Mail)
 firewall-cmd --permanent --add-service=imaps
 firewall-cmd --permanent --add-service=pop3s
-
-# Reload firewall to apply
 firewall-cmd --reload || true
 
 # --------------------------
-# Install Node.js (for frontend)
+# Install Node.js
 # --------------------------
 if ! command -v node >/dev/null 2>&1; then
   echo "[*] Installing Node.js 20..."
@@ -100,25 +94,25 @@ else
 fi
 
 # --------------------------
-# Install nginx + certbot if domain is provided
+# Install Nginx + Certbot
 # --------------------------
 if [ -n "$PANEL_DOMAIN" ]; then
-  echo "[*] Installing nginx and certbot (from EPEL)..."
+  echo "[*] Installing nginx and certbot..."
   dnf install -y nginx certbot python3-certbot-nginx
 fi
 
 # --------------------------
-# Install KumoMTA (Conditional)
+# Install KumoMTA
 # --------------------------
 if rpm -q kumomta &>/dev/null; then
-  echo "[*] KumoMTA is already installed. Skipping."
+  echo "[*] KumoMTA is already installed. Skipping installation."
 else
-  echo "[*] Adding KumoMTA repository and installing KumoMTA..."
+  echo "[*] Installing KumoMTA..."
   dnf config-manager --add-repo https://openrepo.kumomta.com/files/kumomta-rocky.repo || true
   yum install -y kumomta
 fi
 
-echo "[*] Ensuring KumoMTA directories exist..."
+# Ensure policy directories exist even if pre-installed
 mkdir -p /opt/kumomta/etc/policy
 mkdir -p /opt/kumomta/etc/dkim
 
@@ -126,35 +120,33 @@ mkdir -p /opt/kumomta/etc/dkim
 # Install Documentation (For AI Agent)
 # --------------------------
 echo "[*] Fetching KumoMTA documentation for AI Agent..."
-# Clean up any existing folders to prevent conflicts
 rm -rf "$PANEL_DIR/docs-temp" "$PANEL_DIR/docs"
-
-# 1. Clone the FULL repo to a temp folder named "docs-temp"
 git clone --depth 1 https://github.com/KumoCorp/kumomta.git "$PANEL_DIR/docs-temp"
-
-# 2. Move ONLY the "docs" folder from inside the temp folder to our app root
 if [ -d "$PANEL_DIR/docs-temp/docs" ]; then
     mv "$PANEL_DIR/docs-temp/docs" "$PANEL_DIR/docs"
-    echo "[*] Documentation successfully installed to $PANEL_DIR/docs"
+    echo "[*] Documentation installed successfully."
 else
-    echo "[!] Warning: 'docs' folder not found in the cloned repository."
+    echo "[!] Warning: 'docs' folder not found."
 fi
-
-# 3. Delete the temp folder and the rest of the repo files
 rm -rf "$PANEL_DIR/docs-temp"
 
 # --------------------------
-# Build Go backend
+# Build Backend & Migration Tool
 # --------------------------
-echo "[*] Running go mod tidy..."
+echo "[*] Building backend services..."
 GO111MODULE=on go mod tidy
 
-echo "[*] Building KumoMTA-UI backend binary..."
+# 1. Build Server
 GO111MODULE=on go build -o "$BIN_PATH" ./cmd/server
 chmod +x "$BIN_PATH"
 
+# 2. Build Migration Tool
+echo "[*] Building migration tool..."
+GO111MODULE=on go build -o "$MIGRATE_BIN" ./cmd/migrate
+chmod +x "$MIGRATE_BIN"
+
 # --------------------------
-# Build frontend (React/Vite)
+# Build Frontend
 # --------------------------
 echo "[*] Building frontend..."
 if [ -d "$PANEL_DIR/web" ]; then
@@ -163,28 +155,22 @@ if [ -d "$PANEL_DIR/web" ]; then
   npm run build
   cd "$PANEL_DIR"
 else
-  echo "Warning: web directory not found, skipping frontend build"
+  echo "Warning: web directory not found"
 fi
 
 # --------------------------
-# DB directory
+# Setup Systemd
 # --------------------------
-echo "[*] Creating DB directory at $DB_DIR ..."
 mkdir -p "$DB_DIR"
 chmod 755 "$DB_DIR"
 
-# --------------------------
-# systemd service for kumomta-ui
-# --------------------------
-# Determine Listen Address
-# If using Nginx (Domain), bind to localhost. If no domain, bind to 0.0.0.0 to allow access.
 if [ -n "$PANEL_DOMAIN" ]; then
   LISTEN_ADDR="127.0.0.1:9000"
 else
   LISTEN_ADDR="0.0.0.0:9000"
 fi
 
-echo "[*] Creating systemd service at $SERVICE_FILE (Listen: $LISTEN_ADDR)..."
+echo "[*] Creating systemd service..."
 cat >"$SERVICE_FILE" <<EOF
 [Unit]
 Description=KumoMTA UI Backend
@@ -205,53 +191,30 @@ WantedBy=multi-user.target
 EOF
 
 # --------------------------
-# SELinux: allow executing binary from /opt/kumomta-ui
+# SELinux & Firewall
 # --------------------------
-echo "[*] Applying SELinux context for $BIN_PATH ..."
 if command -v semanage >/dev/null 2>&1; then
-  semanage fcontext -a -t bin_t "${PANEL_DIR}(/.*)?" 2>/dev/null || semanage fcontext -m -t bin_t "${PANEL_DIR}(/.*)?"
+  semanage fcontext -a -t bin_t "${PANEL_DIR}(/.*)?" 2>/dev/null || true
   restorecon -Rv "$PANEL_DIR" || true
-fi
-chcon -t bin_t "$BIN_PATH" || true
-
-# --------------------------
-# SELinux: allow nginx to talk to backend on 9000
-# --------------------------
-if command -v semanage >/dev/null 2>&1; then
-  echo "[*] Allowing httpd_t (nginx) to connect to network + port 9000 via SELinux..."
   setsebool -P httpd_can_network_connect on || true
-  semanage port -a -t http_port_t -p tcp 9000 2>/dev/null || semanage port -m -t http_port_t -p tcp 9000 || true
+  semanage port -a -t http_port_t -p tcp 9000 2>/dev/null || true
 fi
 
-# --------------------------
-# systemd: reload & enable services
-# --------------------------
-echo "[*] Reloading systemd daemon..."
 systemctl daemon-reload
-
-echo "[*] Enabling and starting KumoMTA daemon..."
 systemctl enable --now kumomta || true
-
-echo "[*] Enabling KumoMTA-UI service..."
 systemctl enable --now kumomta-ui || true
 
 # --------------------------
-# nginx configuration (if DOMAIN)
+# Nginx Config
 # --------------------------
 if [ -n "$PANEL_DOMAIN" ]; then
-  echo "[*] Writing nginx config to $NGINX_CONF ..."
   cat >"$NGINX_CONF" <<EOF
 server {
     listen 80;
     server_name $PANEL_DOMAIN;
-
     root $PANEL_DIR/web/dist;
     index index.html;
-
-    location / {
-        try_files \$uri /index.html;
-    }
-
+    location / { try_files \$uri /index.html; }
     location /api/ {
         proxy_pass http://127.0.0.1:9000/api/;
         proxy_set_header Host \$host;
@@ -261,26 +224,14 @@ server {
     }
 }
 EOF
-
-  echo "[*] Testing nginx config..."
   nginx -t
-
-  echo "[*] Enabling and starting nginx..."
   systemctl enable --now nginx
-
-  echo "[*] Configuring firewalld for HTTP/HTTPS..."
-  firewall-cmd --permanent --add-service=http || true
-  firewall-cmd --permanent --add-service=https || true
-  firewall-cmd --reload || true
-
-  echo "[*] Requesting Let's Encrypt certificate via certbot..."
-  certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos -m "$LE_EMAIL" --redirect || echo "Warning: certbot failed; check DNS and try manually."
-
+  firewall-cmd --permanent --add-service=http --add-service=https
+  firewall-cmd --reload
+  certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos -m "$LE_EMAIL" --redirect || true
 else
-  echo "[*] No PANEL_DOMAIN provided: running UI directly on http://SERVER_IP:9000"
-  echo "[*] Opening port 9000 in firewalld..."
-  firewall-cmd --permanent --add-port=9000/tcp || true
-  firewall-cmd --reload || true
+  firewall-cmd --permanent --add-port=9000/tcp
+  firewall-cmd --reload
 fi
 
 # --------------------------
@@ -321,6 +272,10 @@ echo
 echo "Next steps:"
 echo "  1) Open the Panel URL in your browser"
 echo "  2) Use 'First-time Setup' to create the admin user"
+echo
+echo "Migration:"
+echo "  If you have an existing KumoMTA config (sources.toml), import it by running:"
+echo "  sudo $MIGRATE_BIN"
 echo
 echo "Useful commands:"
 echo "  systemctl status kumomta-ui"
