@@ -10,6 +10,9 @@ type AppSettings struct {
 	MainServerIP string `json:"main_server_ip"`
 	MailWizzIP   string `json:"mailwizz_ip"` // optional relay IP
 
+	// NEW: Listener Binding (e.g., "127.0.0.1:25" or "0.0.0.0:25")
+	SMTPListenAddr string `json:"smtp_listen_addr"`
+
 	AIProvider string `json:"ai_provider"` // "openai", "deepseek"
 	AIAPIKey   string `json:"ai_api_key"`  // encrypted or blank
 
