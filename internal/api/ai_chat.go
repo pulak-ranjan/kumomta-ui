@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/pulak-ranjan/kumomta-ui/internal/core"
-	"github.com/pulak-ranjan/kumomta-ui/internal/models" // Added import
+	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 )
 
 type ChatMessage struct {
