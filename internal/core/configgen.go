@@ -363,8 +363,8 @@ local function sign_with_dkim(msg)
 end
 
 -- --- HEADER SCRUBBER & SIGNER ---
-local function scrub_headers(msg)
-  -- 1. Remove identifying headers using correct API
+local function scrub_and_sign(msg)
+  -- 1. Remove identifying headers
   msg:remove_all_named_headers('User-Agent')
   msg:remove_all_named_headers('X-Mailer')
   msg:remove_all_named_headers('X-Originating-IP')
@@ -373,11 +373,10 @@ local function scrub_headers(msg)
   
   -- We do NOT remove X-RefID (our renamed KumoRef) to keep bounces working
   msg:remove_x_headers { 'x-campaign', 'x-tenant', 'x-kumomta' }
-end
 
-local function inject_fake_received(msg)
-  -- Add GENERIC Received Header (Fake Postfix style)
+  -- 2. Add Generic "Received" Header (Fake Postfix style)
   local remote_ip = msg:get_meta('received_from_ip') or '127.0.0.1'
+  -- FIX: Use os.date instead of kumo.now()
   local timestamp = os.date("%a, %d %b %Y %H:%M:%S %z")
   
   msg:prepend_header('Received', string.format(
@@ -388,10 +387,33 @@ local function inject_fake_received(msg)
     msg:recipient(),
     timestamp
   ))
+
+  -- 3. Sign with DKIM
+  local sender = msg:from_header()
+  if not sender then return end
+  
+  local sender_email = sender.email:lower()
+  local sender_domain = sender.domain:lower()
+  local domain_key = 'domain.' .. sender_domain
+  local domain_config = dkim_data[domain_key]
+
+  if domain_config and domain_config.policy then
+    for _, policy in ipairs(domain_config.policy) do
+      if policy.match_sender and sender_email == policy.match_sender:lower() then
+        local signer = kumo.dkim.rsa_sha256_signer {
+          domain = sender_domain,
+          selector = policy.selector,
+          headers = domain_config.headers or { 'From', 'To', 'Subject', 'Date', 'Message-ID', 'List-Unsubscribe' },
+          key = { key_file = policy.filename },
+        }
+        msg:dkim_sign(signer)
+        return
+      end
+    end
+  end
 end
 
 kumo.on('smtp_server_message_received', function(msg)
-  -- 1. Extract Metadata FIRST
   local sender = msg:from_header()
   local sender_email = sender and sender.email or ""
 
@@ -401,16 +423,10 @@ kumo.on('smtp_server_message_received', function(msg)
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
 
-  -- 2. Scrub Headers & Add Fake Received
-  scrub_headers(msg)
-  inject_fake_received(msg)
-
-  -- 3. Sign with DKIM
-  sign_with_dkim(msg)
+  scrub_and_sign(msg)
 end)
 
 kumo.on('http_message_generated', function(msg)
-  -- 1. Extract Metadata
   local tenant = msg:get_first_named_header_value('X-Tenant')
   if not tenant then
     local sender = msg:from_header()
@@ -422,12 +438,7 @@ kumo.on('http_message_generated', function(msg)
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
 
-  -- 2. Scrub Headers & Add Fake Received
-  scrub_headers(msg)
-  inject_fake_received(msg)
-
-  -- 3. Sign
-  sign_with_dkim(msg)
+  scrub_and_sign(msg)
 end)
 
 -- Optional: Custom Hook (Safe place for manual overrides)
