@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -93,7 +94,7 @@ func (s *Server) handleDeleteBounce(w http.ResponseWriter, r *http.Request) {
 // System IPs
 // ----------------------
 
-// GET /api/ips
+// GET /api/system/ips
 func (s *Server) handleListIPs(w http.ResponseWriter, r *http.Request) {
 	ips, err := s.Store.ListSystemIPs()
 	if err != nil {
@@ -103,10 +104,48 @@ func (s *Server) handleListIPs(w http.ResponseWriter, r *http.Request) {
 	if ips == nil {
 		ips = []models.SystemIP{}
 	}
+
+	// Check status against OS
+	activeMap := core.GetActiveIPsMap()
+	for i := range ips {
+		if activeMap[ips[i].Value] {
+			ips[i].IsActive = true
+		}
+	}
+
 	writeJSON(w, http.StatusOK, ips)
 }
 
-// POST /api/ips
+// POST /api/system/ips/configure
+// Executes 'ip addr add' on the server
+func (s *Server) handleConfigureIP(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IP        string `json:"ip"`
+		Netmask   string `json:"netmask"`
+		Interface string `json:"interface"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	if req.IP == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ip required"})
+		return
+	}
+
+	if err := core.ConfigureSystemIP(req.IP, req.Netmask, req.Interface); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Log action
+	go s.WS.SendAuditLog("Configure IP", "Added IP to interface: "+req.IP, s.getUser(r))
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "configured"})
+}
+
+// POST /api/system/ips
 func (s *Server) handleAddIP(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Value     string `json:"value"`
@@ -139,7 +178,7 @@ func (s *Server) handleAddIP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, ip)
 }
 
-// POST /api/ips/bulk
+// POST /api/system/ips/bulk
 func (s *Server) handleBulkAddIPs(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IPs []string `json:"ips"`
@@ -154,7 +193,7 @@ func (s *Server) handleBulkAddIPs(w http.ResponseWriter, r *http.Request) {
 	for _, ipVal := range req.IPs {
 		if ipVal != "" {
 			ips = append(ips, models.SystemIP{
-				Value:     ipVal,
+				Value:     strings.TrimSpace(ipVal),
 				CreatedAt: time.Now(),
 			})
 		}
@@ -168,7 +207,7 @@ func (s *Server) handleBulkAddIPs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]int{"added": len(ips)})
 }
 
-// POST /api/ips/cidr
+// POST /api/system/ips/cidr
 func (s *Server) handleAddIPsByCIDR(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CIDR string `json:"cidr"`
@@ -204,7 +243,7 @@ func (s *Server) handleAddIPsByCIDR(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /api/ips/detect
+// POST /api/system/ips/detect
 func (s *Server) handleDetectIPs(w http.ResponseWriter, r *http.Request) {
 	detected := core.DetectServerIPs()
 
@@ -228,7 +267,7 @@ func (s *Server) handleDetectIPs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DELETE /api/ips/{id}
+// DELETE /api/system/ips/{id}
 func (s *Server) handleDeleteIP(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -243,4 +282,6 @@ func (s *Server) handleDeleteIP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 }
