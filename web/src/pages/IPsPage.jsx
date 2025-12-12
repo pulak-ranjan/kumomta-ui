@@ -6,9 +6,12 @@ import {
   Globe, 
   Server, 
   RefreshCw,
-  ListPlus
+  ListPlus,
+  CheckCircle2,
+  Wrench,
+  Loader2
 } from "lucide-react";
-import { getSystemIPs, addSystemIPs } from "../api";
+import { getSystemIPs, addSystemIPs, configureSystemIP } from "../api"; // Added configureSystemIP
 import { cn } from "../lib/utils";
 
 export default function IPsPage() {
@@ -17,6 +20,7 @@ export default function IPsPage() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [configuring, setConfiguring] = useState(null); // ID of IP being configured
 
   const load = async () => {
     setLoading(true);
@@ -45,6 +49,18 @@ export default function IPsPage() {
       setMsg(err.message || "Failed to add IPs");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onConfigure = async (ip) => {
+    setConfiguring(ip.id);
+    try {
+      await configureSystemIP(ip.value, ip.netmask, ip.interface);
+      await load(); // Reload to update status
+    } catch (err) {
+      alert("Failed to configure IP: " + err.message);
+    } finally {
+      setConfiguring(null);
     }
   };
 
@@ -142,11 +158,18 @@ export default function IPsPage() {
                   {ips.map((ip, i) => (
                     <div key={i} className="flex items-center justify-between p-3 hover:bg-muted/50 transition-colors group">
                       <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-md bg-secondary text-secondary-foreground">
+                        <div className={cn("p-2 rounded-md", ip.is_active ? "bg-green-100 text-green-600" : "bg-secondary text-secondary-foreground")}>
                           <Network className="w-4 h-4" />
                         </div>
                         <div>
-                          <div className="font-mono text-sm font-medium">{ip.value}</div>
+                          <div className="font-mono text-sm font-medium flex items-center gap-2">
+                            {ip.value}
+                            {ip.is_active && (
+                              <span className="text-[10px] bg-green-500/10 text-green-600 px-1.5 py-0.5 rounded flex items-center gap-1 font-bold">
+                                <CheckCircle2 className="w-3 h-3" /> Configured
+                              </span>
+                            )}
+                          </div>
                           <div className="text-xs text-muted-foreground flex gap-2">
                             <span>{ip.interface || "eth0"}</span>
                             <span>•</span>
@@ -154,9 +177,22 @@ export default function IPsPage() {
                           </div>
                         </div>
                       </div>
-                      <button className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md opacity-0 group-hover:opacity-100 transition-all">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      
+                      <div className="flex items-center gap-2">
+                        {!ip.is_active && (
+                          <button 
+                            onClick={() => onConfigure(ip)}
+                            disabled={configuring === ip.id}
+                            className="h-8 px-3 rounded-md bg-secondary hover:bg-secondary/80 text-xs font-medium flex items-center gap-1 transition-colors"
+                          >
+                            {configuring === ip.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wrench className="w-3 h-3" />}
+                            Configure
+                          </button>
+                        )}
+                        <button className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md opacity-0 group-hover:opacity-100 transition-all">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
