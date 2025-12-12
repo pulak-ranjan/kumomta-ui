@@ -280,6 +280,8 @@ systemctl restart kumomta-ui
 # --------------------------
 if [ -n "$PANEL_DOMAIN" ]; then
   echo "[*] Configuring Nginx for $PANEL_DOMAIN..."
+  
+  # 1. Write the base HTTP config
   cat >"$NGINX_CONF" <<EOF
 server {
     listen 80;
@@ -296,14 +298,17 @@ server {
     }
 }
 EOF
+
+  # 2. Check Nginx syntax
   nginx -t
   systemctl enable --now nginx
   
-  # Smart SSL Check
+  # 3. Always run Certbot to update the Nginx config, 
+  #    but use 'reinstall' strategy if certs exist to avoid hitting limits.
   if [ -d "/etc/letsencrypt/live/$PANEL_DOMAIN" ]; then
-      echo "[*] SSL Certificate for $PANEL_DOMAIN already exists. Skipping Certbot."
-      # Just restart nginx to pick up any config changes
-      systemctl restart nginx
+      echo "[*] Re-applying existing SSL Certificate to Nginx config..."
+      # Use --reinstall to ensure the nginx conf is updated to listen on 443
+      certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --reinstall --redirect
   else
       echo "[*] Requesting new SSL Certificate..."
       certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos -m "$LE_EMAIL" --redirect || echo "Warning: Certbot failed. Check DNS/Firewall."
