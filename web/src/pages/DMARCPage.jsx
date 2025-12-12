@@ -222,8 +222,12 @@ export default function DMARCPage() {
   );
 }
 
-function DNSSect({ title, recs = [], live = [], icon: Icon, color, onCopy, copied, isDKIM }) {
-  if (recs.length === 0 && live.length === 0) return null;
+function DNSSect({ title, recs, live, icon: Icon, color, onCopy, copied, isDKIM }) {
+  // FIX: Handle potential nulls from API
+  const safeRecs = recs || [];
+  const safeLive = live || [];
+
+  if (safeRecs.length === 0 && safeLive.length === 0) return null;
 
   return (
     <div className="space-y-3 pt-4 first:pt-0 border-t first:border-0">
@@ -231,9 +235,9 @@ function DNSSect({ title, recs = [], live = [], icon: Icon, color, onCopy, copie
         <Icon className={cn("w-3.5 h-3.5", color)} /> {title}
       </div>
       
-      {recs.map((r, i) => {
-        // Find matching live record
-        const found = live.find(l => 
+      {safeRecs.map((r, i) => {
+        // Find matching live record from safeLive
+        const found = safeLive.find(l => 
           isDKIM 
             ? l.selector === r.selector // Match selector for DKIM
             : l.name === r.name // Match name for others
