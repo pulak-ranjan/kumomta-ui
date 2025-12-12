@@ -57,8 +57,9 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 	senderIdx := colMap["sender"]
 	localPartIdx := colMap["localpart"]
 	ipIdx := colMap["ip"]
-	passIdx := colMap["password"] 
-	bounceIdx := colMap["bounce"] 
+	passIdx := colMap["password"]      // Sender SMTP password
+	bounceIdx := colMap["bounce"]      // Bounce Username
+	bouncePassIdx := colMap["bounce_password"] // NEW: Bounce Password
 
 	var stats struct {
 		DomainsCreated  int      `json:"domains_created"`
@@ -142,7 +143,7 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 			ip = strings.TrimSpace(record[ipIdx])
 		}
 
-		// Get Password
+		// Get Sender Password
 		password := ""
 		if passIdx > 0 && passIdx < len(record) {
 			password = strings.TrimSpace(record[passIdx])
@@ -152,6 +153,12 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 		customBounce := ""
 		if bounceIdx > 0 && bounceIdx < len(record) {
 			customBounce = strings.TrimSpace(record[bounceIdx])
+		}
+
+		// Get Custom Bounce Password
+		bouncePass := ""
+		if bouncePassIdx > 0 && bouncePassIdx < len(record) {
+			bouncePass = strings.TrimSpace(record[bouncePassIdx])
 		}
 
 		// Check if already processed
@@ -199,7 +206,8 @@ func (s *Server) handleCSVImport(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create bounce account
-		if err := core.CreateBounceAccount(bounceUser, domainName, s.Store); err == nil {
+		// Changed to CreateBounceAccountWithPassword to support import password
+		if err := core.CreateBounceAccountWithPassword(bounceUser, domainName, bouncePass, "Imported via CSV", s.Store); err == nil {
 			stats.BouncesCreated++
 		}
 	}
