@@ -103,6 +103,9 @@ type SystemIP struct {
 	Netmask   string    `json:"netmask"`                  // e.g. /24
 	Interface string    `json:"interface"`                // e.g. eth0 (optional)
 	CreatedAt time.Time `json:"created_at"`
+
+	// Virtual Field: True if this IP is actually configured on the OS
+	IsActive  bool      `gorm:"-" json:"is_active"` 
 }
 
 // EmailStats stores aggregated sending statistics
