@@ -25,7 +25,6 @@ func PoolName(d models.Domain, s models.Sender) string {
 // sources.toml generator
 // =======================
 
-// GenerateSourcesTOML builds the sources.toml content based on Snapshot.
 func GenerateSourcesTOML(snap *Snapshot) string {
 	var b strings.Builder
 
@@ -34,15 +33,13 @@ func GenerateSourcesTOML(snap *Snapshot) string {
 			continue
 		}
 
-		// Section comment for readability
 		fmt.Fprintf(&b, "# ========================================\n")
 		fmt.Fprintf(&b, "# %s Sources\n", d.Name)
 		fmt.Fprintf(&b, "# ========================================\n\n")
 
 		for _, s := range d.Senders {
 			name := SourceName(d, s)
-
-			// You might want EHLO host to be "<localpart>.<domain>" or "mail.<domain>"
+			// EHLO host: "localpart.domain" or "mail.domain"
 			ehloDomain := fmt.Sprintf("%s.%s", s.LocalPart, d.Name)
 
 			fmt.Fprintf(&b, "[\"%s\"]\n", name)
@@ -50,7 +47,6 @@ func GenerateSourcesTOML(snap *Snapshot) string {
 			fmt.Fprintf(&b, "ehlo_domain = \"%s\"\n\n", ehloDomain)
 		}
 	}
-
 	return b.String()
 }
 
@@ -58,7 +54,6 @@ func GenerateSourcesTOML(snap *Snapshot) string {
 // queues.toml generator
 // =======================
 
-// GenerateQueuesTOML builds queues.toml content.
 func GenerateQueuesTOML(snap *Snapshot) string {
 	var b strings.Builder
 
@@ -68,7 +63,7 @@ func GenerateQueuesTOML(snap *Snapshot) string {
 		}
 
 		fmt.Fprintf(&b, "# ========================================\n")
-		fmt.Fprintf(&b, "# %s Tenants (per sender)\n", d.Name)
+		fmt.Fprintf(&b, "# %s Tenants\n", d.Name)
 		fmt.Fprintf(&b, "# ========================================\n\n")
 
 		for _, s := range d.Senders {
@@ -80,17 +75,13 @@ func GenerateQueuesTOML(snap *Snapshot) string {
 			fmt.Fprintf(&b, "retry_interval = \"1m\"\n")
 			fmt.Fprintf(&b, "max_age = \"3d\"\n")
 
-			// DYNAMIC WARMUP RATE INJECTION
-			// This calls GetSenderRate which we will define in warmup.go (same package)
 			rate := GetSenderRate(s)
 			if rate != "" {
 				fmt.Fprintf(&b, "max_message_rate = \"%s\"\n", rate)
 			}
-
 			fmt.Fprintf(&b, "\n")
 		}
 	}
-
 	return b.String()
 }
 
@@ -98,17 +89,14 @@ func GenerateQueuesTOML(snap *Snapshot) string {
 // listener_domains.toml generator
 // =============================
 
-// GenerateListenerDomainsTOML builds listener_domains.toml content.
 func GenerateListenerDomainsTOML(snap *Snapshot) string {
 	var b strings.Builder
-
 	for _, d := range snap.Domains {
 		fmt.Fprintf(&b, "[\"%s\"]\n", d.Name)
 		fmt.Fprintf(&b, "relay_to = true\n")
 		fmt.Fprintf(&b, "log_oob = true\n")
 		fmt.Fprintf(&b, "log_arf = true\n\n")
 	}
-
 	return b.String()
 }
 
@@ -125,15 +113,16 @@ func GenerateDKIMDataTOML(snap *Snapshot, dkimBasePath string) string {
 		}
 
 		fmt.Fprintf(&b, "# ========================================\n")
-		fmt.Fprintf(&b, "# %s DKIM Configuration\n", d.Name)
+		fmt.Fprintf(&b, "# %s DKIM\n", d.Name)
 		fmt.Fprintf(&b, "# ========================================\n\n")
 
 		fmt.Fprintf(&b, "[domain.\"%s\"]\n", d.Name)
 		fmt.Fprintf(&b, "selector = \"default\"\n")
-		fmt.Fprintf(&b, "headers = [\"From\", \"To\", \"Subject\", \"Date\", \"Message-ID\"]\n\n")
+		// DO NOT include X- headers here, or scrubbing them will break the signature
+		fmt.Fprintf(&b, "headers = [\"From\", \"To\", \"Subject\", \"Date\", \"Message-ID\", \"List-Unsubscribe\"]\n\n")
 
 		for _, s := range d.Senders {
-			selector := s.LocalPart // or use "default" for all, up to you
+			selector := s.LocalPart
 			keyFile := fmt.Sprintf("%s/%s/%s.key", strings.TrimRight(dkimBasePath, "/"), d.Name, s.LocalPart)
 			matchSender := s.Email
 
@@ -142,25 +131,18 @@ func GenerateDKIMDataTOML(snap *Snapshot, dkimBasePath string) string {
 			fmt.Fprintf(&b, "filename = \"%s\"\n", keyFile)
 			fmt.Fprintf(&b, "match_sender = \"%s\"\n\n", matchSender)
 		}
-
 		fmt.Fprintf(&b, "\n")
 	}
-
 	return b.String()
 }
 
 // =======================
-// init.lua generator (basic skeleton)
+// init.lua generator
 // =======================
 
-// GenerateInitLua creates a basic init.lua with HTTP + SMTP listeners.
 func GenerateInitLua(snap *Snapshot) string {
-	// Safe defaults
 	mainHostname := "localhost"
 	relayIPs := []string{"127.0.0.1"}
-	
-	// SECURITY: Default to localhost only. 
-	// To open to the world, user must set SMTPListenAddr in Settings.
 	listenAddr := "127.0.0.1:25"
 
 	if snap.Settings != nil {
@@ -171,7 +153,6 @@ func GenerateInitLua(snap *Snapshot) string {
 			listenAddr = snap.Settings.SMTPListenAddr
 		}
 		if snap.Settings.MailWizzIP != "" {
-			// MailWizzIP is actually generic "relay IPs" CSV
 			parts := strings.Split(snap.Settings.MailWizzIP, ",")
 			relayIPs = []string{"127.0.0.1"}
 			for _, p := range parts {
@@ -223,16 +204,18 @@ kumo.on('init', function()
     trusted_hosts = { '127.0.0.1' },
   }
 
-  -- SMTP Listener
-  -- Secured by relay_hosts list below.
+  -- SMTP Listeners
+  -- Banner hidden to prevent fingerprinting
   kumo.start_esmtp_listener {
     listen = '`)
-	b.WriteString(listenAddr) // DYNAMIC LISTENER
+	b.WriteString(listenAddr)
 	b.WriteString(`',
     hostname = '`)
 	b.WriteString(mainHostname)
 	b.WriteString(`',
-    -- Only these IPs are allowed to relay outbound mail
+    banner = '220 ' .. '`)
+	b.WriteString(mainHostname)
+	b.WriteString(`' .. ' ESMTP',
     relay_hosts = { `)
 	b.WriteString(relayListStr)
 	b.WriteString(` },
@@ -243,6 +226,9 @@ kumo.on('init', function()
     hostname = '`)
 	b.WriteString(mainHostname)
 	b.WriteString(`',
+    banner = '220 ' .. '`)
+	b.WriteString(mainHostname)
+	b.WriteString(`' .. ' ESMTP',
     relay_hosts = { `)
 	b.WriteString(relayListStr)
 	b.WriteString(` },
@@ -253,6 +239,9 @@ kumo.on('init', function()
     hostname = '`)
 	b.WriteString(mainHostname)
 	b.WriteString(`',
+    banner = '220 ' .. '`)
+	b.WriteString(mainHostname)
+	b.WriteString(`' .. ' ESMTP',
     relay_hosts = { `)
 	b.WriteString(relayListStr)
 	b.WriteString(` },
@@ -292,14 +281,12 @@ end)
 
 kumo.on('get_egress_pool', function(pool_name)
   local source_key = pool_name:gsub("-", ":", 1)
-  
   if sources_data[source_key] then
      return kumo.make_egress_pool {
        name = pool_name,
        entries = { { name = source_key } },
      }
   end
-  
   return kumo.make_egress_pool { name = pool_name, entries = {} }
 end)
 
@@ -332,7 +319,6 @@ kumo.on('get_queue_config', function(domain, tenant, campaign, routing_domain)
     max_age = tenant_config.max_age or '3d',
     max_message_rate = tenant_config.max_message_rate,
   }
-
   return kumo.make_queue_config(params)
 end)
 
@@ -354,7 +340,7 @@ local function sign_with_dkim(msg)
         local signer = kumo.dkim.rsa_sha256_signer {
           domain = sender_domain,
           selector = policy.selector,
-          headers = domain_config.headers or { 'From', 'To', 'Subject', 'Date', 'Message-ID' },
+          headers = domain_config.headers or { 'From', 'To', 'Subject', 'Date', 'Message-ID', 'List-Unsubscribe' },
           key = { key_file = policy.filename },
         }
         msg:dkim_sign(signer)
@@ -364,7 +350,20 @@ local function sign_with_dkim(msg)
   end
 end
 
+-- HELPER: Remove headers that reveal infrastructure
+local function scrub_headers(msg)
+  msg:remove_header('User-Agent')
+  msg:remove_header('X-Mailer')
+  msg:remove_header('X-Originating-IP')
+  msg:remove_header('X-KumoRef')
+  msg:remove_header('X-Report-Abuse') 
+  msg:remove_header('X-EBS')
+  -- We remove these last, AFTER using them for logic below
+  msg:remove_x_headers { 'x-campaign', 'x-tenant', 'x-kumomta' }
+end
+
 kumo.on('smtp_server_message_received', function(msg)
+  -- 1. Extract Metadata FIRST
   local sender = msg:from_header()
   local sender_email = sender and sender.email or ""
 
@@ -374,11 +373,15 @@ kumo.on('smtp_server_message_received', function(msg)
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
 
-  msg:remove_x_headers { 'x-campaign', 'x-tenant' }
+  -- 2. Scrub Headers (remove X-Tenant/X-Campaign/X-KumoRef)
+  scrub_headers(msg)
+
+  -- 3. Sign with DKIM (on the cleaned message)
   sign_with_dkim(msg)
 end)
 
 kumo.on('http_message_generated', function(msg)
+  -- 1. Extract Metadata FIRST
   local tenant = msg:get_first_named_header_value('X-Tenant')
   if not tenant then
     local sender = msg:from_header()
@@ -390,7 +393,10 @@ kumo.on('http_message_generated', function(msg)
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
 
-  msg:remove_x_headers { 'x-campaign', 'x-tenant' }
+  -- 2. Scrub Headers
+  scrub_headers(msg)
+
+  -- 3. Sign
   sign_with_dkim(msg)
 end)
 `)
