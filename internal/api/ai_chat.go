@@ -78,6 +78,13 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// --- FIX: Decrypt the API Key before using it ---
+	aiKey, err := core.Decrypt(settings.AIAPIKey)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to decrypt AI key"})
+		return
+	}
+
 	// 1. Gather Context
 	cmd := exec.Command("journalctl", "-u", "kumomta", "-n", "30", "--no-pager")
 	logOut, _ := cmd.CombinedOutput()
@@ -119,8 +126,8 @@ Allowed Commands:
 	finalMessages := []ChatMessage{{Role: "system", Content: systemPrompt}}
 	finalMessages = append(finalMessages, contextMsgs...)
 
-	// 4. Call AI Provider
-	rawReply, err := s.sendToAI(settings.AIProvider, settings.AIAPIKey, finalMessages)
+	// 4. Call AI Provider using the DECRYPTED key
+	rawReply, err := s.sendToAI(settings.AIProvider, aiKey, finalMessages)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
