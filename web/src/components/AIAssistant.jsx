@@ -1,11 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Bot, Send, X, MessageSquare, Loader2, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { sendAIChat } from "../api"; // Assuming you update api.js with new logic or keep using it
+import { sendAIChat, apiRequest } from "../api"; // Import apiRequest
 import { cn } from "../lib/utils";
-
-// Make sure you update your api.js to include getChatHistory if not using raw fetch
-const getToken = () => localStorage.getItem("kumoui_token") || "";
 
 export default function AIAssistant() {
   const [isOpen, setIsOpen] = useState(false);
@@ -28,19 +25,16 @@ export default function AIAssistant() {
 
   const loadHistory = async () => {
     try {
-      const res = await fetch("/api/ai/history", {
-        headers: { Authorization: `Bearer ${getToken()}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setMessages(data);
-        } else if (messages.length === 0) {
-          setMessages([{ role: "assistant", content: "Hello! I am the KumoMTA Guardian. I can secure logs, configure listeners, and manage blocks. How can I assist?" }]);
-        }
+      // Use the standard apiRequest wrapper instead of manual fetch
+      const data = await apiRequest("/ai/history");
+      
+      if (Array.isArray(data) && data.length > 0) {
+        setMessages(data);
+      } else if (messages.length === 0) {
+        setMessages([{ role: "assistant", content: "Hello! I am the KumoMTA Guardian built by pulak-ranjan. I can secure logs, configure listeners, and manage blocks. How can I assist?" }]);
       }
     } catch (e) {
-      console.error(e);
+      console.error("Failed to load history:", e);
     }
   };
 
@@ -54,18 +48,13 @@ export default function AIAssistant() {
     setLoading(true);
 
     try {
-      const res = await sendAIChat({ messages: messages, new_msg: input });
+      const res = await sendAIChat({ messages: [], new_msg: input }); // Don't need to send history anymore
       setMessages(prev => [...prev, { role: "assistant", content: res.reply }]);
     } catch (err) {
       setMessages(prev => [...prev, { role: "assistant", content: "Error: " + err.message }]);
     } finally {
       setLoading(false);
     }
-  };
-
-  const clearHistory = () => {
-    // Ideally add an API endpoint to clear history, for now just clear UI
-    setMessages([{ role: "assistant", content: "History cleared locally." }]);
   };
 
   return (
