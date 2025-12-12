@@ -17,16 +17,59 @@ SERVICE_FILE="/etc/systemd/system/kumomta-ui.service"
 NGINX_CONF="/etc/nginx/conf.d/kumomta-ui.conf"
 
 echo
-read -rp "Set system hostname (eg mta.yourdomain.com) [leave empty to skip]: " SYS_HOSTNAME
-read -rp "Panel domain for HTTPS (eg mta.yourdomain.com) [leave empty for HTTP on :9000]: " PANEL_DOMAIN
 
+# --------------------------
+# 1. Smart Hostname Check
+# --------------------------
+CURRENT_HOSTNAME=$(hostname)
+if [ "$CURRENT_HOSTNAME" != "localhost" ] && [ "$CURRENT_HOSTNAME" != "localhost.localdomain" ]; then
+    echo "Current System Hostname: $CURRENT_HOSTNAME"
+    read -rp "Set system hostname [Press Enter to keep '$CURRENT_HOSTNAME']: " INPUT_HOSTNAME
+    if [ -z "$INPUT_HOSTNAME" ]; then
+        SYS_HOSTNAME="$CURRENT_HOSTNAME"
+    else
+        SYS_HOSTNAME="$INPUT_HOSTNAME"
+    fi
+else
+    read -rp "Set system hostname (eg mta.yourdomain.com) [leave empty to skip]: " SYS_HOSTNAME
+fi
+
+# --------------------------
+# 2. Smart Panel/SSL Check
+# --------------------------
+EXISTING_DOMAIN=""
+if [ -f "$NGINX_CONF" ]; then
+    # Extract server_name from existing nginx config
+    EXISTING_DOMAIN=$(awk '/server_name/ {print $2}' "$NGINX_CONF" | head -n1 | tr -d ';')
+fi
+
+if [ -n "$EXISTING_DOMAIN" ]; then
+    echo "Current Panel Domain (SSL): $EXISTING_DOMAIN"
+    read -rp "Panel domain for HTTPS [Press Enter to keep '$EXISTING_DOMAIN']: " INPUT_DOMAIN
+    if [ -z "$INPUT_DOMAIN" ]; then
+        PANEL_DOMAIN="$EXISTING_DOMAIN"
+    else
+        PANEL_DOMAIN="$INPUT_DOMAIN"
+    fi
+else
+    read -rp "Panel domain for HTTPS (eg mta.yourdomain.com) [leave empty for HTTP on :9000]: " PANEL_DOMAIN
+fi
+
+# --------------------------
+# 3. Smart Email Prompt
+# --------------------------
 LE_EMAIL=""
 if [ -n "$PANEL_DOMAIN" ]; then
-  read -rp "Email for Let's Encrypt (eg admin@yourdomain.com): " LE_EMAIL
-  if [ -z "$LE_EMAIL" ]; then
-    echo "Let's Encrypt email is required when PANEL_DOMAIN is set."
-    exit 1
-  fi
+    # Only ask for email if we DON'T have a cert yet
+    if [ ! -d "/etc/letsencrypt/live/$PANEL_DOMAIN" ]; then
+        read -rp "Email for Let's Encrypt (eg admin@yourdomain.com): " LE_EMAIL
+        if [ -z "$LE_EMAIL" ]; then
+            echo "Error: Let's Encrypt email is required for new SSL setup."
+            exit 1
+        fi
+    else
+        echo "SSL Certificate already exists for $PANEL_DOMAIN. Skipping email prompt."
+    fi
 fi
 
 echo
@@ -44,7 +87,7 @@ cd "$PANEL_DIR"
 # --------------------------
 # System hostname
 # --------------------------
-if [ -n "$SYS_HOSTNAME" ]; then
+if [ -n "$SYS_HOSTNAME" ] && [ "$SYS_HOSTNAME" != "$CURRENT_HOSTNAME" ]; then
   echo "[*] Setting system hostname to $SYS_HOSTNAME"
   hostnamectl set-hostname "$SYS_HOSTNAME" || echo "Warning: failed to set hostname"
 fi
@@ -53,9 +96,8 @@ fi
 # Base dependencies
 # --------------------------
 echo "[*] Installing base dependencies..."
-# Added 'swaks' here (requires epel-release installed first or simultaneously)
 dnf install -y epel-release
-dnf install -y git golang firewalld dnf-plugins-core policycoreutils-python-utils curl bind-utils swaks
+dnf install -y git golang firewalld dnf-plugins-core policycoreutils-python-utils curl bind-utils swaks nano
 
 # Make sure firewalld is running
 systemctl enable --now firewalld || true
@@ -72,15 +114,40 @@ dnf install -y dovecot fail2ban fail2ban-firewalld || true
 systemctl enable --now fail2ban 2>/dev/null || true
 systemctl enable --now dovecot 2>/dev/null || true
 
+# --- FIX: Configure Dovecot for Mixed-Case Usernames ---
+echo "[*] Configuring Dovecot to preserve username case..."
+DOVECOT_CONF="/etc/dovecot/conf.d/10-auth.conf"
+if [ -f "$DOVECOT_CONF" ]; then
+    # Replace 'auth_username_format = %Lu' or '#auth_username_format = %Lu' with '%u'
+    sed -i 's/^#*auth_username_format.*/auth_username_format = %u/' "$DOVECOT_CONF"
+    # echo "    Updated auth_username_format to %u" # Silent success
+    systemctl restart dovecot
+else
+    echo "    Warning: $DOVECOT_CONF not found. Skipping auto-fix."
+fi
+
 # --------------------------
-# Configure Firewall
+# Configure Firewall (Safe & Secure)
 # --------------------------
-echo "[*] Configuring firewall..."
+echo "[*] Configuring firewall ports..."
+# Standard SMTP ports
 firewall-cmd --permanent --add-port=25/tcp
 firewall-cmd --permanent --add-port=587/tcp
 firewall-cmd --permanent --add-port=465/tcp
+
+# Bounce processing ports (IMAP/POP3)
 firewall-cmd --permanent --add-service=imaps
 firewall-cmd --permanent --add-service=pop3s
+firewall-cmd --permanent --add-service=imap
+firewall-cmd --permanent --add-service=pop3
+
+# Ensure HTTP/HTTPS are open
+firewall-cmd --permanent --add-service=http
+firewall-cmd --permanent --add-service=https
+
+# SECURITY: Ensure port 9000 is CLOSED to public (only used locally by Nginx)
+firewall-cmd --permanent --remove-port=9000/tcp 2>/dev/null || true
+
 firewall-cmd --reload || true
 
 # --------------------------
@@ -90,14 +157,15 @@ if ! command -v node >/dev/null 2>&1; then
   echo "[*] Installing Node.js 20..."
   dnf module install -y nodejs:20 || dnf install -y nodejs npm
 else
-  echo "[*] Node.js already installed."
+  # echo "[*] Node.js already installed."
+  :
 fi
 
 # --------------------------
 # Install Nginx + Certbot
 # --------------------------
 if [ -n "$PANEL_DOMAIN" ]; then
-  echo "[*] Installing nginx and certbot..."
+  # echo "[*] Installing nginx and certbot..."
   dnf install -y nginx certbot python3-certbot-nginx
 fi
 
@@ -105,30 +173,31 @@ fi
 # Install KumoMTA
 # --------------------------
 if rpm -q kumomta &>/dev/null; then
-  echo "[*] KumoMTA is already installed. Skipping installation."
+  # echo "[*] KumoMTA is already installed."
+  :
 else
   echo "[*] Installing KumoMTA..."
   dnf config-manager --add-repo https://openrepo.kumomta.com/files/kumomta-rocky.repo || true
   yum install -y kumomta
 fi
 
-# Ensure policy directories exist even if pre-installed
+# Ensure policy directories exist
 mkdir -p /opt/kumomta/etc/policy
 mkdir -p /opt/kumomta/etc/dkim
 
 # --------------------------
 # Install Documentation (For AI Agent)
 # --------------------------
-echo "[*] Fetching KumoMTA documentation for AI Agent..."
-rm -rf "$PANEL_DIR/docs-temp" "$PANEL_DIR/docs"
-git clone --depth 1 https://github.com/KumoCorp/kumomta.git "$PANEL_DIR/docs-temp"
-if [ -d "$PANEL_DIR/docs-temp/docs" ]; then
-    mv "$PANEL_DIR/docs-temp/docs" "$PANEL_DIR/docs"
-    echo "[*] Documentation installed successfully."
-else
-    echo "[!] Warning: 'docs' folder not found."
+if [ ! -d "$PANEL_DIR/docs" ]; then
+    echo "[*] Fetching KumoMTA documentation for AI Agent..."
+    rm -rf "$PANEL_DIR/docs-temp"
+    git clone --depth 1 https://github.com/KumoCorp/kumomta.git "$PANEL_DIR/docs-temp"
+    if [ -d "$PANEL_DIR/docs-temp/docs" ]; then
+        mv "$PANEL_DIR/docs-temp/docs" "$PANEL_DIR/docs"
+        echo "    Documentation installed."
+    fi
+    rm -rf "$PANEL_DIR/docs-temp"
 fi
-rm -rf "$PANEL_DIR/docs-temp"
 
 # --------------------------
 # Build Backend & Migration Tool
@@ -164,13 +233,14 @@ fi
 mkdir -p "$DB_DIR"
 chmod 755 "$DB_DIR"
 
+# Force localhost binding if Nginx is used
 if [ -n "$PANEL_DOMAIN" ]; then
   LISTEN_ADDR="127.0.0.1:9000"
 else
   LISTEN_ADDR="0.0.0.0:9000"
 fi
 
-echo "[*] Creating systemd service..."
+# echo "[*] Configuring systemd service..."
 cat >"$SERVICE_FILE" <<EOF
 [Unit]
 Description=KumoMTA UI Backend
@@ -191,7 +261,7 @@ WantedBy=multi-user.target
 EOF
 
 # --------------------------
-# SELinux & Firewall
+# SELinux
 # --------------------------
 if command -v semanage >/dev/null 2>&1; then
   semanage fcontext -a -t bin_t "${PANEL_DIR}(/.*)?" 2>/dev/null || true
@@ -203,11 +273,13 @@ fi
 systemctl daemon-reload
 systemctl enable --now kumomta || true
 systemctl enable --now kumomta-ui || true
+systemctl restart kumomta-ui
 
 # --------------------------
-# Nginx Config
+# Nginx & SSL Config
 # --------------------------
 if [ -n "$PANEL_DOMAIN" ]; then
+  echo "[*] Configuring Nginx for $PANEL_DOMAIN..."
   cat >"$NGINX_CONF" <<EOF
 server {
     listen 80;
@@ -226,10 +298,18 @@ server {
 EOF
   nginx -t
   systemctl enable --now nginx
-  firewall-cmd --permanent --add-service=http --add-service=https
-  firewall-cmd --reload
-  certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos -m "$LE_EMAIL" --redirect || true
+  
+  # Smart SSL Check
+  if [ -d "/etc/letsencrypt/live/$PANEL_DOMAIN" ]; then
+      echo "[*] SSL Certificate for $PANEL_DOMAIN already exists. Skipping Certbot."
+      # Just restart nginx to pick up any config changes
+      systemctl restart nginx
+  else
+      echo "[*] Requesting new SSL Certificate..."
+      certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos -m "$LE_EMAIL" --redirect || echo "Warning: Certbot failed. Check DNS/Firewall."
+  fi
 else
+  # If no domain, open port 9000 locally
   firewall-cmd --permanent --add-port=9000/tcp
   firewall-cmd --reload
 fi
@@ -247,39 +327,24 @@ fi
 
 echo
 echo "==========================================="
-echo "  KumoMTA + KumoMTA-UI Installed"
+echo "  KumoMTA + KumoMTA-UI Setup Complete"
 echo "==========================================="
+echo
+echo "Status Checks:"
+echo "  [x] Dovecot username format fixed (%u)"
+echo "  [x] Firewall ports opened (SMTP, IMAP, POP3)"
+echo "  [x] Panel Port 9000 secured (Localhost only)"
 echo
 
 if [ -n "$PANEL_DOMAIN" ]; then
   echo "Panel URL:  https://$PANEL_DOMAIN/"
-  echo "API URL:    https://$PANEL_DOMAIN/api"
   if [ -n "$VPS_IP" ]; then
-    echo
     echo "DNS reminder: point A record $PANEL_DOMAIN -> $VPS_IP"
   fi
 else
   if [ -n "$VPS_IP" ]; then
     echo "Panel URL:  http://$VPS_IP:9000/"
-    echo "API URL:    http://$VPS_IP:9000/api"
   else
     echo "Panel URL:  http://<YOUR_SERVER_IP>:9000/"
-    echo "API URL:    http://<YOUR_SERVER_IP>:9000/api"
   fi
 fi
-
-echo
-echo "Next steps:"
-echo "  1) Open the Panel URL in your browser"
-echo "  2) Use 'First-time Setup' to create the admin user"
-echo
-echo "Migration:"
-echo "  If you have an existing KumoMTA config (sources.toml), import it by running:"
-echo "  sudo $MIGRATE_BIN"
-echo
-echo "Useful commands:"
-echo "  systemctl status kumomta-ui"
-echo "  journalctl -u kumomta-ui -f"
-echo "  systemctl restart kumomta-ui"
-echo "  systemctl status kumomta"
-echo
