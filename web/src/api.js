@@ -68,6 +68,14 @@ export function addSystemIPs(cidr, list) {
   });
 }
 
+// NEW: Configure IP on Server (Needed for IPsPage)
+export function configureSystemIP(ip, netmask, iface) {
+  return apiRequest("/system/ips/configure", {
+    method: "POST",
+    body: { ip, netmask, interface: iface }
+  });
+}
+
 // Status & Dashboard
 export function getStatus() {
   return apiRequest("/status", { auth: false });
