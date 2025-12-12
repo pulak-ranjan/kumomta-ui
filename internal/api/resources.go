@@ -283,5 +283,3 @@ func (s *Server) handleDeleteIP(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
-
-}
