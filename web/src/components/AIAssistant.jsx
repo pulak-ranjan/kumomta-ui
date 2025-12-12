@@ -1,17 +1,24 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Bot, Send, X, MessageSquare, Loader2 } from "lucide-react";
+import { Bot, Send, X, MessageSquare, Loader2, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { sendAIChat } from "../api";
+import { sendAIChat } from "../api"; // Assuming you update api.js with new logic or keep using it
 import { cn } from "../lib/utils";
+
+// Make sure you update your api.js to include getChatHistory if not using raw fetch
+const getToken = () => localStorage.getItem("kumoui_token") || "";
 
 export default function AIAssistant() {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState([
-    { role: "assistant", content: "Hello! I'm your KumoMTA Agent. I can manage logs, Dovecot, and config. How can I help?" }
-  ]);
+  const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadHistory();
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -19,25 +26,46 @@ export default function AIAssistant() {
     }
   }, [messages, isOpen]);
 
+  const loadHistory = async () => {
+    try {
+      const res = await fetch("/api/ai/history", {
+        headers: { Authorization: `Bearer ${getToken()}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setMessages(data);
+        } else if (messages.length === 0) {
+          setMessages([{ role: "assistant", content: "Hello! I am the KumoMTA Guardian. I can secure logs, configure listeners, and manage blocks. How can I assist?" }]);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!input.trim() || loading) return;
 
     const newMsg = { role: "user", content: input };
-    const newHistory = [...messages, newMsg];
-    
-    setMessages(newHistory);
+    setMessages(prev => [...prev, newMsg]);
     setInput("");
     setLoading(true);
 
     try {
-      const res = await sendAIChat(newHistory);
-      setMessages([...newHistory, { role: "assistant", content: res.reply }]);
+      const res = await sendAIChat({ messages: messages, new_msg: input });
+      setMessages(prev => [...prev, { role: "assistant", content: res.reply }]);
     } catch (err) {
-      setMessages([...newHistory, { role: "assistant", content: "Error: " + err.message }]);
+      setMessages(prev => [...prev, { role: "assistant", content: "Error: " + err.message }]);
     } finally {
       setLoading(false);
     }
+  };
+
+  const clearHistory = () => {
+    // Ideally add an API endpoint to clear history, for now just clear UI
+    setMessages([{ role: "assistant", content: "History cleared locally." }]);
   };
 
   return (
@@ -50,11 +78,16 @@ export default function AIAssistant() {
               <div className="p-1.5 bg-primary/10 rounded-md text-primary">
                 <Bot className="w-4 h-4" />
               </div>
-              <span className="font-semibold text-sm">Kumo Agent</span>
+              <span className="font-semibold text-sm">Kumo Guardian</span>
             </div>
-            <button onClick={() => setIsOpen(false)} className="hover:bg-muted p-1 rounded transition-colors">
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex gap-1">
+              <button onClick={loadHistory} className="hover:bg-muted p-1 rounded transition-colors" title="Reload History">
+                <RefreshCw className="w-4 h-4" />
+              </button>
+              <button onClick={() => setIsOpen(false)} className="hover:bg-muted p-1 rounded transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
@@ -72,7 +105,6 @@ export default function AIAssistant() {
                     ? "bg-primary text-primary-foreground rounded-tr-none" 
                     : "bg-card border text-card-foreground rounded-tl-none"
                 )}>
-                  {/* Markdown Renderer */}
                   <ReactMarkdown 
                     className="prose dark:prose-invert prose-sm max-w-none break-words"
                     components={{
@@ -98,7 +130,7 @@ export default function AIAssistant() {
                 <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                   <Loader2 className="w-3 h-3 text-primary animate-spin" />
                 </div>
-                <div className="text-muted-foreground text-xs py-2 italic">Working on it...</div>
+                <div className="text-muted-foreground text-xs py-2 italic">Analyzing system...</div>
               </div>
             )}
           </div>
@@ -109,7 +141,7 @@ export default function AIAssistant() {
               <input
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                placeholder="Check status, logs, or config..."
+                placeholder="Ask to block IP, check logs, etc..."
                 className="w-full bg-muted/50 border-0 rounded-md h-10 pl-3 pr-10 text-sm focus:ring-1 focus:ring-primary"
               />
               <button 
