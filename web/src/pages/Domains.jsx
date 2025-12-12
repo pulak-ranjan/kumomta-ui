@@ -11,7 +11,10 @@ import {
   Mail, 
   ShieldCheck, 
   AlertCircle,
-  MoreHorizontal
+  MoreHorizontal,
+  Info,
+  Shield,
+  X
 } from "lucide-react";
 import {
   listDomains,
@@ -31,8 +34,12 @@ export default function Domains() {
   const [systemIPs, setSystemIPs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
+  
+  // Modals State
   const [editingDomain, setEditingDomain] = useState(null);
   const [showImport, setShowImport] = useState(false);
+  const [showInfo, setShowInfo] = useState(false); // New SMTP Info Modal
+  
   const [senderForm, setSenderForm] = useState({
     domainID: null,
     id: 0,
@@ -86,7 +93,7 @@ export default function Domains() {
     setLoading(true);
     try {
       const res = await importSenders(file);
-      setMsg(res.message);
+      setMsg(`Imported: ${res.senders_created} senders, ${res.bounces_created} bounce accounts.`);
       setShowImport(false);
       await load();
     } catch (err) { setMsg(err.message); } finally { setLoading(false); }
@@ -140,7 +147,14 @@ export default function Domains() {
           <h2 className="text-3xl font-bold tracking-tight">Domains</h2>
           <p className="text-muted-foreground">Manage your sending domains and identities.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button 
+            onClick={() => setShowInfo(true)}
+            className="flex items-center gap-2 h-10 px-4 rounded-md border bg-background hover:bg-muted text-sm font-medium transition-colors"
+          >
+            <Info className="w-4 h-4 text-blue-500" />
+            SMTP Info
+          </button>
           <button onClick={() => setShowImport(true)} className="flex items-center gap-2 bg-secondary text-secondary-foreground hover:bg-secondary/80 px-4 py-2 rounded-md text-sm font-medium transition-colors">
             <Upload className="w-4 h-4" /> Import CSV
           </button>
@@ -243,7 +257,61 @@ export default function Domains() {
         </div>
       )}
 
-      {/* Modals omitted for brevity, but structure follows the Login/Register glass card style */}
+      {/* SMTP Info Modal */}
+      {showInfo && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-card w-full max-w-lg border rounded-lg shadow-lg p-6 space-y-4">
+            <div className="flex justify-between items-center border-b pb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Server className="w-5 h-5 text-blue-500" /> SMTP Connection Details
+              </h3>
+              <button onClick={() => setShowInfo(false)}><X className="w-4 h-4" /></button>
+            </div>
+            
+            <div className="space-y-4 text-sm">
+              <p className="text-muted-foreground">Use these settings to connect your email marketing software (e.g. MailWizz, Interspire) to this KumoMTA server.</p>
+              
+              <div className="grid gap-3">
+                <div className="bg-muted/30 p-3 rounded-md border flex justify-between items-center">
+                  <span className="font-medium">Hostname</span>
+                  <span className="font-mono bg-background px-2 py-1 rounded">mail.yourdomain.com</span>
+                </div>
+                <div className="bg-muted/30 p-3 rounded-md border flex justify-between items-center">
+                  <span className="font-medium">Username</span>
+                  <span className="font-mono bg-background px-2 py-1 rounded text-muted-foreground">sender@yourdomain.com</span>
+                </div>
+                <div className="bg-muted/30 p-3 rounded-md border flex justify-between items-center">
+                  <span className="font-medium">Password</span>
+                  <span className="font-mono bg-background px-2 py-1 rounded text-muted-foreground">(Set during creation)</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="border rounded-md p-3 space-y-1">
+                  <div className="text-xs text-muted-foreground font-semibold uppercase">STARTTLS</div>
+                  <div className="text-xl font-bold text-primary">587</div>
+                  <div className="text-[10px] text-muted-foreground">Recommended</div>
+                </div>
+                <div className="border rounded-md p-3 space-y-1">
+                  <div className="text-xs text-muted-foreground font-semibold uppercase">SSL / TLS</div>
+                  <div className="text-xl font-bold text-primary">465</div>
+                  <div className="text-[10px] text-muted-foreground">Secure</div>
+                </div>
+                <div className="border rounded-md p-3 space-y-1">
+                  <div className="text-xs text-muted-foreground font-semibold uppercase">PLAIN</div>
+                  <div className="text-xl font-bold text-primary">25</div>
+                  <div className="text-[10px] text-muted-foreground">Unencrypted</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button onClick={() => setShowInfo(false)} className="px-4 py-2 text-sm rounded-md bg-secondary hover:bg-secondary/80">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Edit Domain Modal */}
       {editingDomain && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -312,7 +380,7 @@ export default function Domains() {
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-card w-full max-w-md border rounded-lg shadow-lg p-6 space-y-4">
             <h3 className="text-lg font-semibold">Bulk Import</h3>
-            <p className="text-sm text-muted-foreground">Upload a CSV with headers: <code>domain, localpart, ip, password</code></p>
+            <p className="text-sm text-muted-foreground">Upload a CSV with headers: <code>domain, localpart, ip, password, bounce, bounce_password</code></p>
             <form onSubmit={handleImport} className="space-y-4">
                 <input type="file" name="file" accept=".csv" className="w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90" required />
                 <div className="flex justify-end gap-2">
