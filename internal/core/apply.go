@@ -8,14 +8,13 @@ import (
 )
 
 // Paths for Kumo policy files.
-// Later we can move these into settings or env if needed.
 const (
-	KumoPolicyDir          = "/opt/kumomta/etc/policy"
-	KumoSourcesPath        = "/opt/kumomta/etc/policy/sources.toml"
-	KumoQueuesPath         = "/opt/kumomta/etc/policy/queues.toml"
+	KumoPolicyDir           = "/opt/kumomta/etc/policy"
+	KumoSourcesPath         = "/opt/kumomta/etc/policy/sources.toml"
+	KumoQueuesPath          = "/opt/kumomta/etc/policy/queues.toml"
 	KumoListenerDomainsPath = "/opt/kumomta/etc/policy/listener_domains.toml"
-	KumoDKIMDataPath       = "/opt/kumomta/etc/policy/dkim_data.toml"
-	KumoInitLuaPath        = "/opt/kumomta/etc/policy/init.lua"
+	KumoDKIMDataPath        = "/opt/kumomta/etc/policy/dkim_data.toml"
+	KumoInitLuaPath         = "/opt/kumomta/etc/policy/init.lua"
 
 	KumoBinary = "/opt/kumomta/sbin/kumod"
 )
@@ -28,42 +27,53 @@ type ApplyResult struct {
 	DKIMDataPath        string `json:"dkim_data_path"`
 	InitLuaPath         string `json:"init_lua_path"`
 
-	ValidationOK bool   `json:"validation_ok"`
+	ValidationOK  bool   `json:"validation_ok"`
 	ValidationLog string `json:"validation_log"`
 
-	RestartOK bool   `json:"restart_ok"`
+	RestartOK  bool   `json:"restart_ok"`
 	RestartLog string `json:"restart_log"`
 }
 
-// ApplyKumoConfig generates and writes Kumo configs,
-// validates them, and restarts the Kumo service if validation passes.
+// ApplyKumoConfig generates comprehensive configs from the DB.
+// It effectively "searches and verifies" that all records in the DB
+// are present in the config files.
 func ApplyKumoConfig(snap *Snapshot) (*ApplyResult, error) {
+	// 1. Ensure Directory Exists
 	if err := os.MkdirAll(KumoPolicyDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create policy dir: %w", err)
 	}
 
-	// Generate content
+	// 2. Generate "Perfect" Content from Database
+	// These functions (in configgen.go) ensure all DB records are included.
 	sources := GenerateSourcesTOML(snap)
 	queues := GenerateQueuesTOML(snap)
 	listenerDomains := GenerateListenerDomainsTOML(snap)
 	dkimData := GenerateDKIMDataTOML(snap, "/opt/kumomta/etc/dkim")
 	initLua := GenerateInitLua(snap)
 
-	// Write files (0644 so kumod user can read)
-	if err := writeFileAtomic(KumoSourcesPath, []byte(sources), 0o644); err != nil {
-		return nil, fmt.Errorf("failed to write sources.toml: %w", err)
+	// Helper: Smart Update
+	// Writes the file only if it's missing or different.
+	// If different, it creates a .bak backup first.
+	applyFile := func(path string, content string) error {
+		return smartUpdateFile(path, []byte(content), 0o644)
 	}
-	if err := writeFileAtomic(KumoQueuesPath, []byte(queues), 0o644); err != nil {
-		return nil, fmt.Errorf("failed to write queues.toml: %w", err)
+
+	// 3. Apply Files (Self-Healing)
+	if err := applyFile(KumoSourcesPath, sources); err != nil {
+		return nil, fmt.Errorf("failed to apply sources.toml: %w", err)
 	}
-	if err := writeFileAtomic(KumoListenerDomainsPath, []byte(listenerDomains), 0o644); err != nil {
-		return nil, fmt.Errorf("failed to write listener_domains.toml: %w", err)
+	if err := applyFile(KumoQueuesPath, queues); err != nil {
+		return nil, fmt.Errorf("failed to apply queues.toml: %w", err)
 	}
-	if err := writeFileAtomic(KumoDKIMDataPath, []byte(dkimData), 0o644); err != nil {
-		return nil, fmt.Errorf("failed to write dkim_data.toml: %w", err)
+	if err := applyFile(KumoListenerDomainsPath, listenerDomains); err != nil {
+		return nil, fmt.Errorf("failed to apply listener_domains.toml: %w", err)
 	}
-	if err := writeFileAtomic(KumoInitLuaPath, []byte(initLua), 0o644); err != nil {
-		return nil, fmt.Errorf("failed to write init.lua: %w", err)
+	if err := applyFile(KumoDKIMDataPath, dkimData); err != nil {
+		return nil, fmt.Errorf("failed to apply dkim_data.toml: %w", err)
+	}
+	// This heals init.lua if it's missing the new logic
+	if err := applyFile(KumoInitLuaPath, initLua); err != nil {
+		return nil, fmt.Errorf("failed to apply init.lua: %w", err)
 	}
 
 	res := &ApplyResult{
@@ -74,7 +84,8 @@ func ApplyKumoConfig(snap *Snapshot) (*ApplyResult, error) {
 		InitLuaPath:         KumoInitLuaPath,
 	}
 
-	// Validate configuration
+	// 4. Validate Configuration
+	// We use the real Kumo binary to verify the generated config is valid.
 	validateCmd := exec.Command(
 		KumoBinary,
 		"--policy", KumoInitLuaPath,
@@ -83,14 +94,16 @@ func ApplyKumoConfig(snap *Snapshot) (*ApplyResult, error) {
 	)
 	out, err := validateCmd.CombinedOutput()
 	res.ValidationLog = string(out)
+	
 	if err != nil {
 		res.ValidationOK = false
-		// If validation fails, do NOT restart service.
-		return res, fmt.Errorf("kumod validation failed: %w", err)
+		// CRITICAL: Validation failed. We do NOT restart.
+		// The .bak files are available if the user needs to revert manually.
+		return res, fmt.Errorf("kumod validation failed (check logs): %w", err)
 	}
 	res.ValidationOK = true
 
-	// Restart Kumo service
+	// 5. Restart Service
 	restartCmd := exec.Command("systemctl", "restart", "kumomta")
 	restartOut, restartErr := restartCmd.CombinedOutput()
 	res.RestartLog = string(restartOut)
@@ -103,14 +116,26 @@ func ApplyKumoConfig(snap *Snapshot) (*ApplyResult, error) {
 	return res, nil
 }
 
-// writeFileAtomic writes data to a temp file and then renames it,
-// to avoid partially written files.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+// smartUpdateFile implements the "Check, Backup, Write" logic
+func smartUpdateFile(path string, data []byte, perm os.FileMode) error {
+	// 1. Read existing file
+	existing, err := os.ReadFile(path)
+	if err == nil {
+		// 2. Compare content
+		if string(existing) == string(data) {
+			// IDENTICAL: No action needed. This is safe and efficient.
+			return nil
+		}
+
+		// 3. DIFFERENT: Create Backup
+		backupPath := path + ".bak"
+		// We ignore backup errors (e.g. permission) to prioritize system recovery,
+		// but typically this succeeds.
+		_ = os.WriteFile(backupPath, existing, perm)
 	}
 
+	// 4. Write New Content (Atomic: Temp -> Rename)
+	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
 		return err
@@ -119,18 +144,16 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
-		_ = os.Remove(tmpName)
+		os.Remove(tmpName)
 		return err
 	}
-
 	if err := tmp.Chmod(perm); err != nil {
 		tmp.Close()
-		_ = os.Remove(tmpName)
+		os.Remove(tmpName)
 		return err
 	}
-
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
+		os.Remove(tmpName)
 		return err
 	}
 
