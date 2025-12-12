@@ -84,13 +84,7 @@ export function getAIInsights() {
   });
 }
 
-// --- NEW: Chat Agent ---
-export function sendAIChat(messages) {
-  return apiRequest("/ai/chat", {
-    method: "POST",
-    body: { messages }
-  });
-}
+// --- NEW: Chat Agent (Updated) ---
 export function sendAIChat(payload) {
   // payload is { messages: [], new_msg: "..." }
   return apiRequest("/ai/chat", {
@@ -200,7 +194,7 @@ export function getLogs(service, lines = 100) {
   return apiRequest(`/logs/${service}?lines=${lines}`);
 }
 
-// --- NEW: Tools & Security ---
+// --- Tools & Security ---
 export function sendTestEmail(payload) {
   return apiRequest("/tools/send-test", {
     method: "POST",
