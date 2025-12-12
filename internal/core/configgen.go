@@ -205,6 +205,13 @@ kumo.on('init', function()
     trusted_hosts = { '127.0.0.1' },
   }
 
+  -- Define Stealth Trace Settings
+  local trace_settings = {
+    received_header = false,      -- Disable default KumoMTA Received header
+    supplemental_header = true,   -- Keep tracking enabled
+    header_name = 'X-RefID',      -- Rename header to hide "Kumo"
+  }
+
   -- SMTP Listeners
   kumo.start_esmtp_listener {
     listen = '`)
@@ -215,10 +222,11 @@ kumo.on('init', function()
 	b.WriteString(`',
     banner = '220 ' .. '`)
 	b.WriteString(mainHostname)
-	b.WriteString(`' .. ' ESMTP',
+	b.WriteString(`', -- Minimal banner
     relay_hosts = { `)
 	b.WriteString(relayListStr)
 	b.WriteString(` },
+    trace_headers = trace_settings,
   }
 
   kumo.start_esmtp_listener {
@@ -228,10 +236,11 @@ kumo.on('init', function()
 	b.WriteString(`',
     banner = '220 ' .. '`)
 	b.WriteString(mainHostname)
-	b.WriteString(`' .. ' ESMTP',
+	b.WriteString(`', 
     relay_hosts = { `)
 	b.WriteString(relayListStr)
 	b.WriteString(` },
+    trace_headers = trace_settings,
   }
 
   kumo.start_esmtp_listener {
@@ -241,17 +250,17 @@ kumo.on('init', function()
 	b.WriteString(`',
     banner = '220 ' .. '`)
 	b.WriteString(mainHostname)
-	b.WriteString(`' .. ' ESMTP',
+	b.WriteString(`',
     relay_hosts = { `)
 	b.WriteString(relayListStr)
 	b.WriteString(` },
+    trace_headers = trace_settings,
   }
 end)
 
 `)
 
-	// --- 2. Load Policy Data (The "Records") ---
-	// This ensures init.lua is aware of all the data files generated from the DB
+	// --- 2. Load Policy Data ---
 	b.WriteString("-- Load config files (generated from DB)\n")
 	b.WriteString("local sources_data = kumo.toml_load('/opt/kumomta/etc/policy/sources.toml')\n")
 	b.WriteString("local queues_data = kumo.toml_load('/opt/kumomta/etc/policy/queues.toml')\n")
@@ -354,7 +363,6 @@ local function sign_with_dkim(msg)
 end
 
 -- --- HEADER SCRUBBER (SECURITY) ---
--- Removes headers that reveal infrastructure
 local function scrub_headers(msg)
   msg:remove_header('User-Agent')
   msg:remove_header('X-Mailer')
@@ -363,7 +371,23 @@ local function scrub_headers(msg)
   msg:remove_header('X-Report-Abuse') 
   msg:remove_header('X-EBS')
   -- We remove these last, AFTER using them for logic below
+  -- NOTE: We do NOT remove X-RefID (our renamed KumoRef) to keep bounces working
   msg:remove_x_headers { 'x-campaign', 'x-tenant', 'x-kumomta' }
+end
+
+local function inject_fake_received(msg)
+  -- Add GENERIC Received Header (Fake Postfix style)
+  local remote_ip = msg:get_meta('received_from_ip') or '127.0.0.1'
+  local timestamp = kumo.now():format("%a, %d %b %Y %H:%M:%S %z")
+  
+  msg:prepend_header('Received', string.format(
+    "from %s ([%s])\r\n\tby %s (Postfix) with ESMTPS\r\n\tfor <%s>; %s",
+    msg:get_meta('received_from_name') or 'localhost',
+    remote_ip,
+    '` + mainHostname + `',
+    msg:recipient(),
+    timestamp
+  ))
 end
 
 kumo.on('smtp_server_message_received', function(msg)
@@ -377,8 +401,9 @@ kumo.on('smtp_server_message_received', function(msg)
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
 
-  -- 2. Scrub Headers (This ensures security even if old init.lua was bad)
+  -- 2. Scrub Headers & Add Fake Received
   scrub_headers(msg)
+  inject_fake_received(msg)
 
   -- 3. Sign with DKIM
   sign_with_dkim(msg)
@@ -397,8 +422,9 @@ kumo.on('http_message_generated', function(msg)
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
 
-  -- 2. Scrub Headers
+  -- 2. Scrub Headers & Add Fake Received
   scrub_headers(msg)
+  inject_fake_received(msg)
 
   -- 3. Sign
   sign_with_dkim(msg)
