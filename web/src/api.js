@@ -91,6 +91,13 @@ export function sendAIChat(messages) {
     body: { messages }
   });
 }
+export function sendAIChat(payload) {
+  // payload is { messages: [], new_msg: "..." }
+  return apiRequest("/ai/chat", {
+    method: "POST",
+    body: payload
+  });
+}
 
 // Settings
 export function getSettings() {
