@@ -135,8 +135,8 @@ func (s *Server) routes() chi.Router {
 		r.Post("/api/tools/send-test", s.handleSendTestEmail)
 
 		// AI Chat & Analysis
-		r.Post("/api/system/ai-analyze", s.handleAIAnalyze) // Deprecated but kept
-		r.Post("/api/ai/chat", s.handleAIChat)              // NEW Agent endpoint
+		r.Get("/api/ai/history", s.handleGetChatHistory) // NEW
+		r.Post("/api/ai/chat", s.handleAIChat)
 
 		// Warmup Routes
 		r.Get("/api/warmup", s.handleGetWarmupList)
