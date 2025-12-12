@@ -274,7 +274,13 @@ func (s *Server) handleAIAnalyze(w http.ResponseWriter, r *http.Request) {
 		prompt = "Analyze these KumoMTA logs. Identify any critical errors, warnings, or configuration issues. Be concise."
 	}
 
-	analysis, err := callAIAPI(settings.AIProvider, settings.AIAPIKey, prompt, context)
+	aiKey, err := core.Decrypt(settings.AIAPIKey)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to decrypt AI key"})
+		return
+	}
+
+	analysis, err := callAIAPI(settings.AIProvider, aiKey, prompt, context)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "AI Provider Error: " + err.Error()})
 		return

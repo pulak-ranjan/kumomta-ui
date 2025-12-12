@@ -1,12 +1,18 @@
 package core
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -88,4 +94,92 @@ func pruneBackups() error {
 		}
 	}
 	return nil
+}
+
+var (
+	keyOnce sync.Once
+)
+
+// Encryption Key Management
+func getEncryptionKey() []byte {
+	secret := os.Getenv("KUMO_APP_SECRET")
+	if secret == "" {
+		keyOnce.Do(func() {
+			fmt.Println("WARNING: KUMO_APP_SECRET not set. Using insecure default key for encryption.")
+		})
+		// Fallback for development/quickstart
+		// In production, this should be set!
+		secret = "kumo-default-insecure-secret-key-32b"
+	}
+	// Pad or truncate to 32 bytes for AES-256
+	b := []byte(secret)
+	if len(b) < 32 {
+		pad := make([]byte, 32-len(b))
+		b = append(b, pad...)
+	}
+	return b[:32]
+}
+
+func Encrypt(plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+	key := getEncryptionKey()
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+func Decrypt(ciphertext string) (string, error) {
+	if ciphertext == "" {
+		return "", nil
+	}
+
+	// Backward compatibility: If it's not base64 or decryption fails, return original
+	data, err := base64.StdEncoding.DecodeString(ciphertext)
+	if err != nil {
+		// Not base64, assume plaintext
+		return ciphertext, nil
+	}
+
+	key := getEncryptionKey()
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		// Too short to be valid ciphertext, assume plaintext (if valid base64)
+		return ciphertext, nil
+	}
+
+	nonce, ciphertextBytes := data[:nonceSize], data[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertextBytes, nil)
+	if err != nil {
+		// Decryption failed (auth tag mismatch), so it wasn't encrypted with our key.
+		// Assume legacy plaintext.
+		return ciphertext, nil
+	}
+
+	return string(plaintext), nil
 }

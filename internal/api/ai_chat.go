@@ -96,7 +96,13 @@ INSTRUCTIONS:
 	finalMessages := append([]ChatMessage{{Role: "system", Content: systemPrompt}}, req.Messages...)
 
 	// 4. Call AI Provider
-	rawReply, err := s.sendToAI(settings.AIProvider, settings.AIAPIKey, finalMessages)
+	aiKey, err := core.Decrypt(settings.AIAPIKey)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to decrypt AI key"})
+		return
+	}
+
+	rawReply, err := s.sendToAI(settings.AIProvider, aiKey, finalMessages)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
