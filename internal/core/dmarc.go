@@ -2,7 +2,9 @@ package core
 
 import (
 	"fmt"
+	"net"
 	"strings"
+	"sync"
 
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 )
@@ -15,7 +17,24 @@ type DMARCRecord struct {
 	Policy   string `json:"policy"`
 }
 
-// GenerateDMARCRecord creates a DMARC record for a domain
+// AllDNSRecords holds both generated and live DNS states
+type AllDNSRecords struct {
+	Domain string          `json:"domain"`
+	A      []DNSRecord     `json:"a"`
+	MX     []DNSRecord     `json:"mx"`
+	SPF    DNSRecord       `json:"spf"`
+	DMARC  DNSRecord       `json:"dmarc"`
+	DKIM   []DKIMDNSRecord `json:"dkim"`
+}
+
+type DNSRecord struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	TTL   int    `json:"ttl"`
+}
+
+// GenerateDMARCRecord creates a DMARC record for a domain based on DB settings
 func GenerateDMARCRecord(domain *models.Domain) DMARCRecord {
 	policy := domain.DMARCPolicy
 	if policy == "" {
@@ -55,23 +74,7 @@ func GenerateDMARCRecord(domain *models.Domain) DMARCRecord {
 	}
 }
 
-// GenerateAllDNSRecords generates all DNS records for a domain
-type AllDNSRecords struct {
-	Domain    string        `json:"domain"`
-	A         []DNSRecord   `json:"a"`
-	MX        []DNSRecord   `json:"mx"`
-	SPF       DNSRecord     `json:"spf"`
-	DMARC     DNSRecord     `json:"dmarc"`
-	DKIM      []DKIMDNSRecord `json:"dkim"`
-}
-
-type DNSRecord struct {
-	Name  string `json:"name"`
-	Type  string `json:"type"`
-	Value string `json:"value"`
-	TTL   int    `json:"ttl"`
-}
-
+// GenerateAllDNSRecords generates expected DNS records based on configuration
 func GenerateAllDNSRecords(domain *models.Domain, mainIP string, snap *Snapshot) AllDNSRecords {
 	records := AllDNSRecords{
 		Domain: domain.Name,
@@ -140,6 +143,120 @@ func GenerateAllDNSRecords(domain *models.Domain, mainIP string, snap *Snapshot)
 	}
 
 	return records
+}
+
+// LookupLiveDNS queries the actual DNS records for the domain
+func LookupLiveDNS(domain *models.Domain) (AllDNSRecords, error) {
+	records := AllDNSRecords{
+		Domain: domain.Name,
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	// Helper to add A records
+	addA := func(name string) {
+		defer wg.Done()
+		ips, err := net.LookupIP(name)
+		if err == nil {
+			for _, ip := range ips {
+				if ipv4 := ip.To4(); ipv4 != nil {
+					mu.Lock()
+					records.A = append(records.A, DNSRecord{Name: name, Type: "A", Value: ipv4.String()})
+					mu.Unlock()
+				}
+			}
+		}
+	}
+
+	// Helper to add MX records
+	addMX := func() {
+		defer wg.Done()
+		mxs, err := net.LookupMX(domain.Name)
+		if err == nil {
+			for _, mx := range mxs {
+				mu.Lock()
+				records.MX = append(records.MX, DNSRecord{Name: domain.Name, Type: "MX", Value: fmt.Sprintf("%d %s", mx.Pref, mx.Host)})
+				mu.Unlock()
+			}
+		}
+	}
+
+	// Helper to add TXT records (SPF, DMARC, DKIM)
+	addTXT := func() {
+		defer wg.Done()
+		// Root TXT (SPF)
+		txts, _ := net.LookupTXT(domain.Name)
+		for _, txt := range txts {
+			if strings.HasPrefix(txt, "v=spf1") {
+				mu.Lock()
+				records.SPF = DNSRecord{Name: domain.Name, Type: "TXT", Value: txt}
+				mu.Unlock()
+			}
+		}
+
+		// DMARC
+		dmarcs, _ := net.LookupTXT("_dmarc." + domain.Name)
+		for _, txt := range dmarcs {
+			if strings.HasPrefix(txt, "v=DMARC1") {
+				mu.Lock()
+				records.DMARC = DNSRecord{Name: "_dmarc." + domain.Name, Type: "TXT", Value: txt}
+				mu.Unlock()
+			}
+		}
+
+		// DKIM (Check all senders)
+		// We use a map to avoid checking the same selector twice
+		checkedSelectors := make(map[string]bool)
+		for _, s := range domain.Senders {
+			if s.LocalPart == "" || checkedSelectors[s.LocalPart] {
+				continue
+			}
+			checkedSelectors[s.LocalPart] = true
+			
+			dkimName := s.LocalPart + "._domainkey." + domain.Name
+			dkimTxts, _ := net.LookupTXT(dkimName)
+			for _, txt := range dkimTxts {
+				if strings.HasPrefix(txt, "v=DKIM1") {
+					mu.Lock()
+					records.DKIM = append(records.DKIM, DKIMDNSRecord{
+						Domain:   domain.Name,
+						Selector: s.LocalPart,
+						DNSName:  dkimName,
+						DNSValue: txt,
+					})
+					mu.Unlock()
+				}
+			}
+		}
+	}
+
+	wg.Add(3)
+	// 1. A Records
+	go func() {
+		defer wg.Done()
+		var subWg sync.WaitGroup
+		
+		mailHost := domain.MailHost
+		if mailHost == "" { mailHost = "mail." + domain.Name }
+		
+		bounceHost := domain.BounceHost
+		if bounceHost == "" { bounceHost = "bounce." + domain.Name }
+
+		subWg.Add(2)
+		go addA(mailHost)
+		go addA(bounceHost)
+		subWg.Wait()
+	}()
+
+	// 2. MX Records
+	go addMX()
+
+	// 3. TXT Records (SPF/DMARC/DKIM)
+	go addTXT()
+
+	wg.Wait()
+	return records, nil
 }
 
 // ValidateDMARCPolicy checks if policy is valid
