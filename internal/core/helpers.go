@@ -90,6 +90,16 @@ type DetectedIP struct {
 	Interface string `json:"interface"`
 }
 
+// GetActiveIPsMap returns a set of all currently active IPs on the OS
+func GetActiveIPsMap() map[string]bool {
+	active := make(map[string]bool)
+	detected := DetectServerIPs()
+	for _, d := range detected {
+		active[d.IP] = true
+	}
+	return active
+}
+
 // DetectServerIPs finds all IPv4 addresses on the server
 func DetectServerIPs() []DetectedIP {
 	var detected []DetectedIP
@@ -136,6 +146,37 @@ func DetectServerIPs() []DetectedIP {
 	return detected
 }
 
+// ConfigureSystemIP executes the shell command to add the IP to the interface
+func ConfigureSystemIP(ip, netmask, iface string) error {
+	if netmask == "" {
+		netmask = "/32"
+	}
+	if iface == "" {
+		iface = "eth0"
+	}
+
+	// 1. Runtime Config (Immediate)
+	// ip addr add 1.2.3.4/32 dev eth0
+	cmd := exec.Command("ip", "addr", "add", ip+netmask, "dev", iface)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// If it says "File exists", it's already there, which is fine
+		if strings.Contains(string(out), "File exists") {
+			return nil
+		}
+		return fmt.Errorf("failed to add IP: %s", string(out))
+	}
+
+	// 2. Persistence (Rocky/RHEL/CentOS via NetworkManager)
+	// nmcli con mod eth0 +ipv4.addresses "1.2.3.4/32"
+	// We do this so it survives reboot, but we DON'T run 'con up' to avoid connection reset risks.
+	// The runtime config above handles the "now".
+	nmCmd := exec.Command("nmcli", "con", "mod", iface, "+ipv4.addresses", ip+netmask)
+	// We ignore errors here because nmcli might not be managing the interface or might be missing
+	_ = nmCmd.Run()
+
+	return nil
+}
+
 // ExpandCIDR expands a CIDR notation to list of IPs
 func ExpandCIDR(cidr string) ([]string, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
@@ -143,7 +184,6 @@ func ExpandCIDR(cidr string) ([]string, error) {
 		return nil, fmt.Errorf("invalid CIDR: %v", err)
 	}
 
-	// FIX: Move declarations outside the loop so they are available in the entire function scope
 	ones, bits := ipNet.Mask.Size()
 
 	var ips []string
