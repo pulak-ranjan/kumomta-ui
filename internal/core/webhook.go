@@ -200,6 +200,7 @@ func (ws *WebhookService) RunSecurityAudit() error {
 	}
 
 	settings, _ := ws.Store.GetSettings()
+	// Check if AIAPIKey is set (encrypted or not, just check presence)
 	if settings != nil && settings.AIAPIKey == "" {
 		risks = append(risks, "AI API Key missing (Log Analysis disabled)")
 	}

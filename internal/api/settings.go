@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/pulak-ranjan/kumomta-ui/internal/core"
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
@@ -62,7 +63,12 @@ func (s *Server) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 	existing.AIProvider = dto.AIProvider
 
 	if dto.AIAPIKey != "" {
-		existing.AIAPIKey = dto.AIAPIKey // TODO: encrypt before storing
+		enc, err := core.Encrypt(dto.AIAPIKey)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to encrypt key"})
+			return
+		}
+		existing.AIAPIKey = enc
 	}
 
 	if err := s.Store.UpsertSettings(existing); err != nil {
