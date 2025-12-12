@@ -32,6 +32,8 @@ func NewStore(path string) (*Store, error) {
 		&models.SystemIP{},
 		&models.EmailStats{},
 		&models.WebhookLog{},
+		&models.APIKey{},
+		&models.ChatLog{}, // NEW
 	); err != nil {
 		return nil, err
 	}
@@ -46,6 +48,8 @@ func (s *Store) LogError(err error) {
 }
 
 var ErrNotFound = gorm.ErrRecordNotFound
+
+// ... [Existing code for Sessions, Settings, Domains, etc. remains unchanged] ...
 
 // ----------------------
 // Auth Sessions (Multi-Device)
@@ -318,13 +322,11 @@ func (s *Store) DeleteSystemIP(id uint) error {
 // ----------------------
 
 func (s *Store) UpsertEmailStats(stats *models.EmailStats) error {
-	// Try to find existing record for this domain+date
 	var existing models.EmailStats
 	date := stats.Date.Truncate(24 * time.Hour)
 
 	err := s.DB.Where("domain = ? AND date = ?", stats.Domain, date).First(&existing).Error
 	if err == nil {
-		// Update existing
 		existing.Sent += stats.Sent
 		existing.Delivered += stats.Delivered
 		existing.Bounced += stats.Bounced
@@ -333,7 +335,6 @@ func (s *Store) UpsertEmailStats(stats *models.EmailStats) error {
 		return s.DB.Save(&existing).Error
 	}
 
-	// Create new
 	stats.Date = date
 	stats.UpdatedAt = time.Now()
 	return s.DB.Create(stats).Error
@@ -365,11 +366,7 @@ func (s *Store) GetTodayStats() ([]models.EmailStats, error) {
 
 func (s *Store) SetEmailStats(stats *models.EmailStats) error {
 	date := stats.Date.Truncate(24 * time.Hour)
-	
-	// Delete existing for this domain+date
 	s.DB.Where("domain = ? AND date = ?", stats.Domain, date).Delete(&models.EmailStats{})
-	
-	// Create new
 	stats.Date = date
 	stats.UpdatedAt = time.Now()
 	return s.DB.Create(stats).Error
@@ -386,5 +383,37 @@ func (s *Store) CreateWebhookLog(wl *models.WebhookLog) error {
 func (s *Store) ListWebhookLogs(limit int) ([]models.WebhookLog, error) {
 	var logs []models.WebhookLog
 	err := s.DB.Order("created_at desc").Limit(limit).Find(&logs).Error
+	return logs, err
+}
+
+// ----------------------
+// Chat Logs (AI Memory)
+// ----------------------
+
+func (s *Store) SaveChatLog(role, content string) error {
+	// Limit history to 500 messages to prevent DB bloat
+	var count int64
+	s.DB.Model(&models.ChatLog{}).Count(&count)
+	if count > 500 {
+		var oldest models.ChatLog
+		s.DB.Order("created_at asc").First(&oldest)
+		s.DB.Delete(&oldest)
+	}
+
+	log := &models.ChatLog{
+		Role:      role,
+		Content:   content,
+		CreatedAt: time.Now(),
+	}
+	return s.DB.Create(log).Error
+}
+
+func (s *Store) GetChatHistory(limit int) ([]models.ChatLog, error) {
+	var logs []models.ChatLog
+	err := s.DB.Order("created_at desc").Limit(limit).Find(&logs).Error
+	// Reverse order for chat display
+	for i, j := 0, len(logs)-1; i < j; i, j = i+1, j-1 {
+		logs[i], logs[j] = logs[j], logs[i]
+	}
 	return logs, err
 }
