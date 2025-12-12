@@ -19,11 +19,11 @@ func EnsureBounceAccount(acc models.BounceAccount, plainPassword string) error {
 		return fmt.Errorf("username is required")
 	}
 
-	// FIX: Validate username format to prevent shell injection
-	// Only allow lowercase alphanumeric, underscores, and hyphens.
-	validUsername := regexp.MustCompile(`^[a-z0-9_-]+$`)
+	// FIX: Relaxed regex to allow dots (.) and uppercase letters
+	// Safe characters: a-z, A-Z, 0-9, _, -, .
+	validUsername := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 	if !validUsername.MatchString(acc.Username) {
-		return fmt.Errorf("invalid username format: must be [a-z0-9_-]")
+		return fmt.Errorf("invalid username format: must be [a-zA-Z0-9_.-]")
 	}
 
 	// Check if user exists: id -u username
@@ -73,7 +73,8 @@ func EnsureBounceAccount(acc models.BounceAccount, plainPassword string) error {
 // RemoveSystemUser deletes the linux user and their home directory
 func RemoveSystemUser(username string) error {
 	// Security check on username format
-	validUsername := regexp.MustCompile(`^[a-z0-9_-]+$`)
+	// Also updated to match the creation regex
+	validUsername := regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 	if !validUsername.MatchString(username) {
 		return fmt.Errorf("invalid username format")
 	}
