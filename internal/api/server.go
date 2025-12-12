@@ -95,6 +95,7 @@ func (s *Server) routes() chi.Router {
 		// System IPs
 		r.Get("/api/system/ips", s.handleListIPs)
 		r.Post("/api/system/ips", s.handleAddIP)
+		r.Post("/api/system/ips/configure", s.handleConfigureIP) // <--- NEW ROUTE
 		r.Delete("/api/system/ips/{id}", s.handleDeleteIP)
 		r.Post("/api/system/ips/bulk", s.handleBulkAddIPs)
 		r.Post("/api/system/ips/cidr", s.handleAddIPsByCIDR)
@@ -136,7 +137,7 @@ func (s *Server) routes() chi.Router {
 
 		// AI Chat & Analysis
 		r.Post("/api/system/ai-analyze", s.handleAIAnalyze)
-		r.Get("/api/ai/history", s.handleGetChatHistory) // NEW
+		r.Get("/api/ai/history", s.handleGetChatHistory)
 		r.Post("/api/ai/chat", s.handleAIChat)
 
 		// Warmup Routes
@@ -169,8 +170,7 @@ func (s *Server) routes() chi.Router {
 	return r
 }
 
-// --- Middlewares & Helpers ---
-
+// ... (Rest of file same as before) ...
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
