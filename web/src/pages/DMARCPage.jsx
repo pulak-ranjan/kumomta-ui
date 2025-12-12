@@ -1,25 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  ShieldCheck, 
-  Globe, 
-  Settings, 
-  Copy, 
-  Check, 
-  Server, 
-  Mail, 
-  FileKey,
-  AlertTriangle 
+  ShieldCheck, Globe, Settings, Copy, Check, Server, Mail, FileKey, RefreshCw, AlertTriangle
 } from 'lucide-react';
-import { listDomains } from "../api"; // Assuming listDomains is exported from api.js
 import { cn } from '../lib/utils';
 
 export default function DMARCPage() {
   const [domains, setDomains] = useState([]);
   const [selected, setSelected] = useState(null);
   const [dmarc, setDmarc] = useState({ policy: 'none', rua: '', ruf: '', percentage: 100 });
-  const [record, setRecord] = useState(null);
-  const [allDns, setAllDns] = useState(null);
+  const [dnsData, setDnsData] = useState(null); // { generated, live }
   const [saving, setSaving] = useState(false);
+  const [loadingDNS, setLoadingDNS] = useState(false);
   const [message, setMessage] = useState('');
 
   const token = localStorage.getItem('kumoui_token');
@@ -44,16 +35,17 @@ export default function DMARCPage() {
       ruf: domain.dmarc_ruf || '', 
       percentage: domain.dmarc_percentage || 100 
     });
-    setRecord(null); // Clear previous
-    setAllDns(null);
-    
+    setDnsData(null);
+    loadDNS(domain.id);
+  };
+
+  const loadDNS = async (id) => {
+    setLoadingDNS(true);
     try {
-      const res = await fetch(`/api/dmarc/${domain.id}`, { headers });
-      if (res.ok) setRecord(await res.json());
-      
-      const dnsRes = await fetch(`/api/dns/${domain.id}`, { headers });
-      if (dnsRes.ok) setAllDns(await dnsRes.json());
+      const res = await fetch(`/api/dns/${id}`, { headers });
+      if (res.ok) setDnsData(await res.json());
     } catch (e) { console.error(e); }
+    setLoadingDNS(false);
   };
 
   const saveDMARC = async (e) => {
@@ -63,8 +55,8 @@ export default function DMARCPage() {
     try {
       const res = await fetch(`/api/dmarc/${selected.id}`, { method: 'POST', headers, body: JSON.stringify(dmarc) });
       if (res.ok) { 
-        setRecord(await res.json()); 
-        setMessage('DMARC record updated successfully'); 
+        setMessage('DMARC record updated'); 
+        loadDNS(selected.id);
         fetchDomains(); 
       }
       else setMessage('Failed to save settings');
@@ -84,18 +76,18 @@ export default function DMARCPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">DMARC & DNS</h1>
-        <p className="text-muted-foreground">Configure email authentication policies and view DNS records.</p>
+        <p className="text-muted-foreground">Configure policies and verify live DNS records.</p>
       </div>
 
       {message && (
-        <div className={cn("p-4 rounded-md text-sm font-medium", message.includes("Failed") || message.includes("Error") ? "bg-destructive/10 text-destructive" : "bg-green-500/10 text-green-600")}>
+        <div className="p-4 rounded-md text-sm font-medium bg-green-500/10 text-green-600">
           {message}
         </div>
       )}
 
       <div className="grid lg:grid-cols-3 gap-6">
         
-        {/* Column 1: Domain Selection */}
+        {/* Column 1: Domain List */}
         <div className="bg-card border rounded-xl p-4 shadow-sm flex flex-col h-[calc(100vh-200px)]">
           <h3 className="font-semibold mb-4 flex items-center gap-2">
             <Globe className="w-4 h-4 text-muted-foreground" /> Select Domain
@@ -112,7 +104,7 @@ export default function DMARCPage() {
               >
                 <div>
                   <div className="font-medium">{d.name}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5 capitalize">Policy: {d.dmarc_policy || 'none'}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">Policy: {d.dmarc_policy || 'none'}</div>
                 </div>
                 {selected?.id === d.id && <Check className="w-4 h-4" />}
               </button>
@@ -120,15 +112,15 @@ export default function DMARCPage() {
           </div>
         </div>
 
-        {/* Column 2: Settings Form */}
+        {/* Column 2: Configuration */}
         <div className="bg-card border rounded-xl p-6 shadow-sm">
           <h3 className="font-semibold mb-6 flex items-center gap-2">
-            <Settings className="w-4 h-4 text-muted-foreground" /> Configuration
+            <Settings className="w-4 h-4 text-muted-foreground" /> Policy Config
           </h3>
           {!selected ? (
             <div className="h-full flex flex-col items-center justify-center text-muted-foreground text-sm opacity-50">
               <Globe className="w-12 h-12 mb-2 stroke-1" />
-              Select a domain to configure
+              Select a domain
             </div>
           ) : (
             <form onSubmit={saveDMARC} className="space-y-5">
@@ -138,10 +130,9 @@ export default function DMARCPage() {
                   className="w-full h-10 rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-ring"
                 >
                   <option value="none">None (Monitor Only)</option>
-                  <option value="quarantine">Quarantine (Spam Folder)</option>
-                  <option value="reject">Reject (Block)</option>
+                  <option value="quarantine">Quarantine</option>
+                  <option value="reject">Reject</option>
                 </select>
-                <p className="text-[10px] text-muted-foreground">Action to take if checks fail.</p>
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">Aggregate Email (rua)</label>
@@ -165,95 +156,134 @@ export default function DMARCPage() {
                 </div>
               </div>
               <button type="submit" disabled={saving} className="w-full h-10 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm">
-                {saving ? 'Generating...' : 'Save & Generate Record'}
+                {saving ? 'Saving...' : 'Save Configuration'}
               </button>
             </form>
           )}
         </div>
 
-        {/* Column 3: DNS Records */}
+        {/* Column 3: DNS Status */}
         <div className="bg-card border rounded-xl p-6 shadow-sm overflow-y-auto h-[calc(100vh-200px)]">
-          <h3 className="font-semibold mb-6 flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-muted-foreground" /> DNS Preview
-          </h3>
-          
-          <div className="space-y-6">
-            {/* DMARC Result */}
-            {record && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  <span>_dmarc TXT Record</span>
-                  <button onClick={() => copyToClipboard(record.dns_value, 'dmarc-val')} className="hover:text-foreground transition-colors">
-                    {copied === 'dmarc-val' ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
-                  </button>
-                </div>
-                <div className="p-3 bg-muted/50 border rounded-md font-mono text-xs break-all text-foreground">
-                  {record.dns_value}
-                </div>
-              </div>
-            )}
-
-            {/* Other Records */}
-            {allDns && (
-              <div className="space-y-4 pt-4 border-t">
-                {allDns.a?.map((r, i) => (
-                  <DNSRow key={`a-${i}`} type="A" name={r.name} value={r.value} icon={Server} color="bg-blue-500/10 text-blue-600" />
-                ))}
-                {allDns.mx?.map((r, i) => (
-                  <DNSRow key={`mx-${i}`} type="MX" name={r.name} value={r.value} icon={Mail} color="bg-purple-500/10 text-purple-600" />
-                ))}
-                {allDns.spf && (
-                  <DNSRow type="SPF" name="TXT" value={allDns.spf.value} icon={ShieldCheck} color="bg-green-500/10 text-green-600" isCopyable onCopy={copyToClipboard} />
-                )}
-                {allDns.dkim?.map((r, i) => (
-                  <DNSRow key={`dkim-${i}`} type="DKIM" name={r.dns_name} value={r.dns_value} icon={FileKey} color="bg-orange-500/10 text-orange-600" isCopyable onCopy={copyToClipboard} />
-                ))}
-              </div>
-            )}
-
-            {!record && !allDns && (
-              <div className="text-center py-8 text-muted-foreground text-sm italic">
-                Select a domain to view records
-              </div>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="font-semibold flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-muted-foreground" /> DNS Status
+            </h3>
+            {selected && (
+              <button onClick={() => loadDNS(selected.id)} className="p-1.5 hover:bg-muted rounded-md transition-colors" title="Refresh Live Data">
+                <RefreshCw className={cn("w-4 h-4", loadingDNS && "animate-spin")} />
+              </button>
             )}
           </div>
+          
+          {loadingDNS ? (
+            <div className="text-center py-12 text-muted-foreground">Scanning DNS records...</div>
+          ) : dnsData ? (
+            <div className="space-y-6">
+              <DNSSect title="A Records" 
+                recs={dnsData.generated.a} 
+                live={dnsData.live.a} 
+                icon={Server} color="text-blue-500" 
+                onCopy={copyToClipboard} copied={copied}
+              />
+              <DNSSect title="MX Records" 
+                recs={dnsData.generated.mx} 
+                live={dnsData.live.mx} 
+                icon={Mail} color="text-purple-500" 
+                onCopy={copyToClipboard} copied={copied}
+              />
+              <DNSSect title="TXT / SPF" 
+                recs={dnsData.generated.spf?.value ? [dnsData.generated.spf] : []} 
+                live={dnsData.live.spf?.value ? [dnsData.live.spf] : []} 
+                icon={ShieldCheck} color="text-green-500" 
+                onCopy={copyToClipboard} copied={copied}
+              />
+              <DNSSect title="DMARC" 
+                recs={dnsData.generated.dmarc?.value ? [dnsData.generated.dmarc] : []} 
+                live={dnsData.live.dmarc?.value ? [dnsData.live.dmarc] : []} 
+                icon={ShieldCheck} color="text-orange-500" 
+                onCopy={copyToClipboard} copied={copied}
+              />
+              <DNSSect title="DKIM" 
+                recs={dnsData.generated.dkim} 
+                live={dnsData.live.dkim} 
+                icon={FileKey} color="text-pink-500" 
+                onCopy={copyToClipboard} copied={copied}
+                isDKIM
+              />
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground text-sm italic">
+              Select a domain to view records
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function DNSRow({ type, name, value, icon: Icon, color, isCopyable, onCopy }) {
-  const [isHovered, setIsHovered] = useState(false);
-  
+function DNSSect({ title, recs = [], live = [], icon: Icon, color, onCopy, copied, isDKIM }) {
+  if (recs.length === 0 && live.length === 0) return null;
+
   return (
-    <div 
-      className="group relative"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      <div className="flex items-start gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors">
-        <div className={cn("p-1.5 rounded-md shrink-0", color)}>
-          <Icon className="w-3.5 h-3.5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-0.5">
-            <span className="text-[10px] font-bold uppercase text-muted-foreground">{type}</span>
-            <span className="text-xs font-medium truncate">{name}</span>
-          </div>
-          <div className="text-[11px] font-mono text-muted-foreground break-all leading-tight">
-            {value}
-          </div>
-        </div>
-        {isCopyable && (
-          <button 
-            onClick={() => onCopy(value, value)} // simple id strategy
-            className={cn("absolute top-2 right-2 p-1.5 rounded-md hover:bg-background border shadow-sm transition-opacity", isHovered ? "opacity-100" : "opacity-0")}
-          >
-            <Copy className="w-3 h-3" />
-          </button>
-        )}
+    <div className="space-y-3 pt-4 first:pt-0 border-t first:border-0">
+      <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+        <Icon className={cn("w-3.5 h-3.5", color)} /> {title}
       </div>
+      
+      {recs.map((r, i) => {
+        // Find matching live record
+        const found = live.find(l => 
+          isDKIM 
+            ? l.selector === r.selector // Match selector for DKIM
+            : l.name === r.name // Match name for others
+        );
+        
+        // Simple status check
+        const isMatch = found && (
+          isDKIM 
+            ? found.dns_value.includes("p=") // Rough check for DKIM key presence
+            : found.value === r.value
+        );
+
+        return (
+          <div key={i} className="text-sm border rounded-lg overflow-hidden">
+            <div className="bg-muted/30 p-2 border-b flex justify-between items-center">
+              <span className="font-mono text-xs font-semibold">{r.name || r.dns_name}</span>
+              <div className="flex gap-2">
+                {found ? (
+                  isMatch 
+                    ? <span className="text-[10px] bg-green-500/10 text-green-600 px-1.5 rounded flex items-center gap-1"><Check className="w-3 h-3" /> Live</span>
+                    : <span className="text-[10px] bg-amber-500/10 text-amber-600 px-1.5 rounded flex items-center gap-1">Mismatch</span>
+                ) : (
+                  <span className="text-[10px] bg-red-500/10 text-red-600 px-1.5 rounded">Not Found</span>
+                )}
+              </div>
+            </div>
+            
+            {/* Recommended */}
+            <div className="p-2 flex gap-2 group">
+              <div className="min-w-[60px] text-[10px] uppercase text-muted-foreground pt-0.5">Config</div>
+              <code className="flex-1 font-mono text-[10px] break-all text-muted-foreground">
+                {r.value || r.dns_value}
+              </code>
+              <button onClick={() => onCopy(r.value || r.dns_value, r.name)} className="opacity-0 group-hover:opacity-100 transition-opacity">
+                {copied === r.name ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+              </button>
+            </div>
+
+            {/* Live (only show if found and different, or just show to confirm) */}
+            {found && !isMatch && (
+              <div className="p-2 flex gap-2 bg-red-500/5 border-t border-red-100 dark:border-red-900/20">
+                <div className="min-w-[60px] text-[10px] uppercase text-red-500 pt-0.5">Found</div>
+                <code className="flex-1 font-mono text-[10px] break-all text-red-600 dark:text-red-400">
+                  {found.value || found.dns_value}
+                </code>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
