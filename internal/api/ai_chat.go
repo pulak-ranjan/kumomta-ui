@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -24,20 +23,30 @@ type ChatMessage struct {
 }
 
 type ChatRequest struct {
-	Messages []ChatMessage `json:"messages"`
+	Messages []ChatMessage `json:"messages"` // Optional now, usually just the last one is needed if using DB
+	NewMsg   string        `json:"new_msg"`  // The new message from user
 }
 
 // Allowed "Safe" Tools for the Agent
 var allowedTools = map[string]string{
 	"status":          "Check KumoMTA Service Status",
 	"queue":           "Check Queue Summary",
-	"version":         "Check KumoMTA Version",
+	"logs_kumo":       "Get recent KumoMTA Logs (last 30 lines)",
+	"logs_error":      "Get recent Error Logs (last 30 lines)",
+	"config_bind_ip":  "Update SMTP listener IP (PORT 25 ONLY). Args: IP address",
+	"block_ip":        "Ban an IP address using Firewall (Guardian). Args: IP",
+	"backup_config":   "Create a backup of /opt/kumomta/etc.",
 	"dig":             "Perform DNS Lookup (dig)",
-	"logs_kumo":       "Get recent KumoMTA Logs (last 20 lines)",
-	"logs_error":      "Get recent Error Logs (last 20 lines)",
-	"config_bind_ip":  "Update SMTP listener IP (args: IP address)",
-	"dovecot_status":  "Check Dovecot Service Status",
-	"fail2ban_status": "Check Fail2Ban Service Status",
+}
+
+// GET /api/ai/history
+func (s *Server) handleGetChatHistory(w http.ResponseWriter, r *http.Request) {
+	logs, err := s.Store.GetChatHistory(50)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch history"})
+		return
+	}
+	writeJSON(w, http.StatusOK, logs)
 }
 
 // POST /api/ai/chat
@@ -48,71 +57,84 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settings, err := s.Store.GetSettings()
-	if err != nil || settings == nil || settings.AIAPIKey == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "AI not configured in settings"})
+	// Handle Legacy UI call format (just messages array)
+	userContent := req.NewMsg
+	if userContent == "" && len(req.Messages) > 0 {
+		userContent = req.Messages[len(req.Messages)-1].Content
+	}
+
+	if userContent == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "empty message"})
 		return
 	}
 
-	// 1. Gather System Context (Live Logs snapshot)
+	// Save User Message
+	s.Store.SaveChatLog("user", userContent)
+
+	settings, err := s.Store.GetSettings()
+	if err != nil || settings == nil || settings.AIAPIKey == "" {
+		reply := "AI is not configured. Please add an API Key in Settings."
+		s.Store.SaveChatLog("assistant", reply)
+		writeJSON(w, http.StatusOK, map[string]string{"reply": reply})
+		return
+	}
+
+	// 1. Gather Context
 	cmd := exec.Command("journalctl", "-u", "kumomta", "-n", "30", "--no-pager")
 	logOut, _ := cmd.CombinedOutput()
 
-	// 2. Gather Knowledge Base (Docs)
-	docsContext := loadLocalDocs("docs", 6000) 
+	// 2. Load History from DB (Memory)
+	historyLogs, _ := s.Store.GetChatHistory(10) // Last 10 exchanges for context
+	var contextMsgs []ChatMessage
+	for _, l := range historyLogs {
+		contextMsgs = append(contextMsgs, ChatMessage{Role: l.Role, Content: l.Content})
+	}
 
-	// 3. Construct System Persona & Prompt
+	// 3. Construct System Prompt
 	toolsDesc := ""
 	for k, v := range allowedTools {
 		toolsDesc += fmt.Sprintf("- `%s`: %s\n", k, v)
 	}
 
-	systemPrompt := fmt.Sprintf(`You are the KumoMTA Resident Expert Agent.
-Your goal is to help the admin manage their MTA, debug errors, and configure the server.
+	systemPrompt := fmt.Sprintf(`You are the KumoMTA Guardian. 
+Your role is to Secure, Configure, and Monitor this MTA server.
 
-[CAPABILITIES]
-You can run safe system tasks by outputting a command tag at the END of your response.
+[TOOLS]
+You can run system tasks by outputting a command tag at the END of your response.
 Format: <<EXEC: command_name args>>
 Allowed Commands:
 %s
-- Example: "I will check the queue. <<EXEC: queue>>"
-- Example: "I will bind the listener to localhost. <<EXEC: config_bind_ip 127.0.0.1>>"
 
-[CURRENT SYSTEM SNAPSHOT]
-Last 30 Log Lines:
+[BEHAVIORAL RULES]
+1. **Be Structured:** Use Headers (##) and Bullet points. No conversational fluff.
+2. **Be Suspicious:** If logs show "auth failed" or "relay denied" > 5 times from an IP, suggest 'block_ip'.
+3. **Be Safe:** ALWAYS run 'backup_config' before 'config_bind_ip'.
+4. **Binding Info:** 'config_bind_ip' ONLY changes Port 25. Ports 587/465 remain on 0.0.0.0. Tell the user this.
+5. **Confirmation:** If the user asks for a sensitive action (change config, block IP), ASK FOR CONFIRMATION first.
+
+[CURRENT SYSTEM LOGS]
 %s
+`, toolsDesc, string(logOut))
 
-[DOCUMENTATION SNIPPET]
-%s
-
-INSTRUCTIONS:
-- Use Markdown to structure your response (Bold, Tables, Lists, Code Blocks).
-- If the user asks about an error, CROSS-REFERENCE the logs with the Documentation.
-- If the user asks for a sensitive action (like changing config), ASK FOR CONFIRMATION first.
-- NEVER suggest destructive commands (rm, kill, stop).
-`, toolsDesc, string(logOut), docsContext)
-
-	// Prepend system prompt
-	finalMessages := append([]ChatMessage{{Role: "system", Content: systemPrompt}}, req.Messages...)
+	// Construct final payload
+	finalMessages := []ChatMessage{{Role: "system", Content: systemPrompt}}
+	finalMessages = append(finalMessages, contextMsgs...)
 
 	// 4. Call AI Provider
-	aiKey, err := core.Decrypt(settings.AIAPIKey)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to decrypt AI key"})
-		return
-	}
-
-	rawReply, err := s.sendToAI(settings.AIProvider, aiKey, finalMessages)
+	rawReply, err := s.sendToAI(settings.AIProvider, settings.AIAPIKey, finalMessages)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
-	// 5. Check for Tool Execution Tags
+	// 5. Process Tools
 	reply, toolOutput := s.processToolExecution(rawReply)
 	if toolOutput != "" {
 		reply += fmt.Sprintf("\n\n**System Output:**\n```\n%s\n```", toolOutput)
 	}
+
+	// Save Assistant Reply
+	s.Store.SaveChatLog("assistant", reply)
 
 	writeJSON(w, http.StatusOK, map[string]string{"reply": reply})
 }
@@ -151,8 +173,12 @@ func (s *Server) runSafeTool(cmdName, args string) string {
 		}
 		return fmt.Sprintf("Total: %d, Queued: %d, Deferred: %d", stats.Total, stats.Queued, stats.Deferred)
 
-	case "version":
-		out, _ := exec.Command("rpm", "-q", "kumomta").CombinedOutput()
+	case "logs_kumo":
+		out, _ := exec.Command("journalctl", "-u", "kumomta", "-n", "30", "--no-pager").CombinedOutput()
+		return string(out)
+		
+	case "logs_error":
+		out, _ := exec.Command("journalctl", "-u", "kumomta", "-p", "err", "-n", "30", "--no-pager").CombinedOutput()
 		return string(out)
 
 	case "dig":
@@ -163,21 +189,17 @@ func (s *Server) runSafeTool(cmdName, args string) string {
 		out, _ := exec.Command("dig", "+short", "MX", args).CombinedOutput()
 		return fmt.Sprintf("MX Records for %s:\n%s", args, string(out))
 
-	case "logs_kumo":
-		out, _ := exec.Command("journalctl", "-u", "kumomta", "-n", "20", "--no-pager").CombinedOutput()
-		return string(out)
-		
-	case "logs_error":
-		out, _ := exec.Command("journalctl", "-u", "kumomta", "-p", "err", "-n", "20", "--no-pager").CombinedOutput()
-		return string(out)
+	case "block_ip":
+		if err := core.BlockIP(args); err != nil {
+			return "Block Failed: " + err.Error()
+		}
+		return fmt.Sprintf("✅ IP %s has been blocked in firewall.", args)
 
-	case "dovecot_status":
-		out, _ := exec.Command("systemctl", "status", "dovecot").CombinedOutput()
-		return string(out)
-
-	case "fail2ban_status":
-		out, _ := exec.Command("fail2ban-client", "status").CombinedOutput()
-		return string(out)
+	case "backup_config":
+		if err := core.BackupConfig(); err != nil {
+			return "Backup Failed: " + err.Error()
+		}
+		return "✅ Configuration backed up successfully."
 
 	case "config_bind_ip":
 		ip := strings.TrimSpace(args)
@@ -203,7 +225,7 @@ func (s *Server) runSafeTool(cmdName, args string) string {
 		if err != nil {
 			return fmt.Sprintf("Apply Failed: %v\nValidation Output: %s", err, res.ValidationLog)
 		}
-		return fmt.Sprintf("Success! Listener updated to %s. Service restarted.", settings.SMTPListenAddr)
+		return fmt.Sprintf("Success! Port 25 Listener updated to %s. Service restarted.", settings.SMTPListenAddr)
 
 	default:
 		return "Command not allowed or unknown."
@@ -259,35 +281,4 @@ func (s *Server) sendToAI(provider, key string, messages []ChatMessage) (string,
 		}
 	}
 	return "No response.", nil
-}
-
-// loadLocalDocs reads .md files from ./docs/
-func loadLocalDocs(dir string, limit int) string {
-	var sb strings.Builder
-	totalLen := 0
-
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil { return nil }
-		if !info.IsDir() && strings.HasSuffix(info.Name(), ".md") {
-			content, _ := os.ReadFile(path)
-			if totalLen+len(content) > limit {
-				return filepath.SkipAll
-			}
-			sb.WriteString(fmt.Sprintf("\n--- DOC: %s ---\n", info.Name()))
-			text := string(content)
-			text = strings.ReplaceAll(text, "\n\n", "\n") 
-			excerptLen := 1500
-			if len(text) < excerptLen {
-				excerptLen = len(text)
-			}
-			sb.WriteString(text[:excerptLen])
-			totalLen += excerptLen
-		}
-		return nil
-	})
-	
-	if totalLen == 0 {
-		return "No local documentation found."
-	}
-	return sb.String()
 }
