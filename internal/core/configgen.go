@@ -172,6 +172,7 @@ func GenerateInitLua(snap *Snapshot) string {
 
 	var b strings.Builder
 
+	// --- 1. System Config ---
 	b.WriteString(`local kumo = require 'kumo'
 
 kumo.on('init', function()
@@ -205,7 +206,6 @@ kumo.on('init', function()
   }
 
   -- SMTP Listeners
-  -- Banner hidden to prevent fingerprinting
   kumo.start_esmtp_listener {
     listen = '`)
 	b.WriteString(listenAddr)
@@ -250,12 +250,15 @@ end)
 
 `)
 
-	b.WriteString("-- Load config files\n")
+	// --- 2. Load Policy Data (The "Records") ---
+	// This ensures init.lua is aware of all the data files generated from the DB
+	b.WriteString("-- Load config files (generated from DB)\n")
 	b.WriteString("local sources_data = kumo.toml_load('/opt/kumomta/etc/policy/sources.toml')\n")
 	b.WriteString("local queues_data = kumo.toml_load('/opt/kumomta/etc/policy/queues.toml')\n")
 	b.WriteString("local dkim_data = kumo.toml_load('/opt/kumomta/etc/policy/dkim_data.toml')\n")
 	b.WriteString("local listener_domains = kumo.toml_load('/opt/kumomta/etc/policy/listener_domains.toml')\n\n")
 
+	// --- 3. Routing Logic ---
 	b.WriteString(`
 local function get_tenant_from_sender(sender_email)
   if sender_email then
@@ -350,7 +353,8 @@ local function sign_with_dkim(msg)
   end
 end
 
--- HELPER: Remove headers that reveal infrastructure
+-- --- HEADER SCRUBBER (SECURITY) ---
+-- Removes headers that reveal infrastructure
 local function scrub_headers(msg)
   msg:remove_header('User-Agent')
   msg:remove_header('X-Mailer')
@@ -373,15 +377,15 @@ kumo.on('smtp_server_message_received', function(msg)
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
 
-  -- 2. Scrub Headers (remove X-Tenant/X-Campaign/X-KumoRef)
+  -- 2. Scrub Headers (This ensures security even if old init.lua was bad)
   scrub_headers(msg)
 
-  -- 3. Sign with DKIM (on the cleaned message)
+  -- 3. Sign with DKIM
   sign_with_dkim(msg)
 end)
 
 kumo.on('http_message_generated', function(msg)
-  -- 1. Extract Metadata FIRST
+  -- 1. Extract Metadata
   local tenant = msg:get_first_named_header_value('X-Tenant')
   if not tenant then
     local sender = msg:from_header()
@@ -399,6 +403,9 @@ kumo.on('http_message_generated', function(msg)
   -- 3. Sign
   sign_with_dkim(msg)
 end)
+
+-- Optional: Custom Hook (Safe place for manual overrides)
+pcall(dofile, '/opt/kumomta/etc/policy/custom.lua')
 `)
 
 	return b.String()
