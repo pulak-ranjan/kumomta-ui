@@ -135,6 +135,7 @@ func (s *Server) routes() chi.Router {
 		r.Post("/api/tools/send-test", s.handleSendTestEmail)
 
 		// AI Chat & Analysis
+		r.Post("/api/system/ai-analyze", s.handleAIAnalyze)
 		r.Get("/api/ai/history", s.handleGetChatHistory) // NEW
 		r.Post("/api/ai/chat", s.handleAIChat)
 
