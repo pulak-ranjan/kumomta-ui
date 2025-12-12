@@ -151,3 +151,11 @@ type APIKey struct {
 	CreatedAt time.Time `json:"created_at"`
 	LastUsed  time.Time `json:"last_used"`
 }
+
+// ChatLog stores AI conversation history (NEW)
+type ChatLog struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Role      string    `json:"role"` // "user", "assistant"
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+}
