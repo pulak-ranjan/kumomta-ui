@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -17,9 +18,9 @@ import (
 
 // Standard KumoMTA paths
 const (
-	SourcesPath  = "/opt/kumomta/etc/policy/sources.toml"
-	InitLuaPath  = "/opt/kumomta/etc/policy/init.lua"
-	DBPath       = "/var/lib/kumomta-ui/panel.db"
+	SourcesPath = "/opt/kumomta/etc/policy/sources.toml"
+	InitLuaPath = "/opt/kumomta/etc/policy/init.lua"
+	DBPath      = "/var/lib/kumomta-ui/panel.db"
 )
 
 func main() {
@@ -44,6 +45,39 @@ func main() {
 	parseSourcesToml(st)
 
 	fmt.Println("\n✅ Migration complete! Configuration and IPs have been imported.")
+
+	// 5. Safe Restart (Preserves Queue, Applies New Config)
+	resetKumoMTA()
+}
+
+func resetKumoMTA() {
+	fmt.Println("\n🔄 Restarting KumoMTA to apply new configuration...")
+	fmt.Println("   (This preserves the mail queue and retries delivery with new settings)")
+
+	// 1. Restart the service
+	// KumoMTA will reload init.lua and sources.toml upon startup.
+	// Any messages currently in the spool will be preserved.
+	cmd := exec.Command("systemctl", "restart", "kumomta")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Printf("   ⚠️ Error restarting service: %v\n   Output: %s\n", err, string(out))
+		fmt.Println("   ❌ Please check logs manually: journalctl -u kumomta -n 50")
+		return
+	}
+
+	fmt.Println("   ✅ Service restarted successfully.")
+
+	// 2. Wait a moment for initialization
+	time.Sleep(2 * time.Second)
+
+	// 3. Verify status
+	fmt.Println("\n📝 Verifying service status...")
+	verify := exec.Command("systemctl", "is-active", "kumomta")
+	if out, err := verify.CombinedOutput(); err != nil {
+		fmt.Printf("   Service status: %s\n", strings.TrimSpace(string(out)))
+	} else {
+		fmt.Println("   Status: Active")
+		fmt.Println("   Queue processing has resumed with the new configuration.")
+	}
 }
 
 func parseInitLua(st *store.Store) {
@@ -66,7 +100,7 @@ func parseInitLua(st *store.Store) {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		// Capture Hostname
 		if matches := reHostname.FindStringSubmatch(line); len(matches) > 1 {
 			if settings.MainHostname == "" {
@@ -74,7 +108,7 @@ func parseInitLua(st *store.Store) {
 				fmt.Printf("   Found Hostname: %s\n", settings.MainHostname)
 			}
 		}
-		
+
 		// Capture Relay IPs (generic)
 		if matches := reRelay.FindStringSubmatch(line); len(matches) > 1 {
 			if !strings.Contains(settings.MailWizzIP, matches[1]) {
@@ -125,7 +159,7 @@ func parseSourcesToml(st *store.Store) {
 		// 1. Capture Source IP
 		if matches := reSource.FindStringSubmatch(line); len(matches) > 1 {
 			currentIP = matches[1]
-			
+
 			// FEATURE: Add to IP Inventory automatically
 			if currentIP != "" {
 				sysIP := &models.SystemIP{
@@ -140,7 +174,7 @@ func parseSourcesToml(st *store.Store) {
 		// 2. Capture Identity (EHLO)
 		if matches := reEhlo.FindStringSubmatch(line); len(matches) > 1 {
 			ehlo := matches[1] // e.g. "selector.example.com"
-			
+
 			// Generic splitting logic: assume generic format "selector.domain.tld"
 			parts := strings.SplitN(ehlo, ".", 2)
 			if len(parts) != 2 {
@@ -164,7 +198,7 @@ func parseSourcesToml(st *store.Store) {
 				IP:             currentIP,
 				BounceUsername: bounceUser,
 			}
-			
+
 			// Upsert Sender
 			var existing models.Sender
 			if err := st.DB.Where("email = ?", sender.Email).First(&existing).Error; err == nil {
