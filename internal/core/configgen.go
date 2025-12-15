@@ -16,9 +16,12 @@ func SourceName(d models.Domain, s models.Sender) string {
 }
 
 // Egress pool / tenant name per sender.
+// FIX: Changed from hyphen to colon separator to support hyphenated domains
+// Old: "example.com-info" (breaks with my-domain.com)
+// New: "example.com:info" (works with any domain)
 func PoolName(d models.Domain, s models.Sender) string {
-	// Example: "example.com-info"
-	return fmt.Sprintf("%s-%s", d.Name, s.LocalPart)
+	// Example: "example.com:info" (same as SourceName for consistency)
+	return fmt.Sprintf("%s:%s", d.Name, s.LocalPart)
 }
 
 // =======================
@@ -268,14 +271,17 @@ end)
 	b.WriteString("local listener_domains = kumo.toml_load('/opt/kumomta/etc/policy/listener_domains.toml')\n\n")
 
 	// --- 3. Tenant Helper Function ---
+	// FIX: Changed separator from hyphen to colon to support hyphenated domains
 	b.WriteString(`-- =====================================================
 -- TENANT LOGIC
 -- =====================================================
+-- FIX: Using colon separator (domain:localpart) to support hyphenated domains
+-- Example: my-domain.com:editor -> tenant = "my-domain.com:editor"
 local function get_tenant_from_sender(sender_email)
   if sender_email then
     local localpart, domain = sender_email:match("([^@]+)@(.+)")
     if localpart and domain then
-      return domain .. "-" .. localpart
+      return domain .. ":" .. localpart
     end
   end
   return "default"
@@ -299,12 +305,14 @@ end)
 -- =====================================================
 -- EGRESS POOLS / SOURCES
 -- =====================================================
+-- FIX: Pool name now uses colon separator (same as source name)
+-- No conversion needed - pool_name IS the source_key
 kumo.on('get_egress_pool', function(pool_name)
-  local source_key = pool_name:gsub("-", ":", 1)
-  if sources_data[source_key] then
+  -- Pool name format: "domain.com:localpart" (same as source name)
+  if sources_data[pool_name] then
     return kumo.make_egress_pool {
       name = pool_name,
-      entries = { { name = source_key } },
+      entries = { { name = pool_name } },
     }
   end
   return kumo.make_egress_pool { name = pool_name, entries = {} }
