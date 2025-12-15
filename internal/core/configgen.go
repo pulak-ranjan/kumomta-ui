@@ -16,12 +16,33 @@ func SourceName(d models.Domain, s models.Sender) string {
 }
 
 // Egress pool / tenant name per sender.
-// FIX: Changed from hyphen to colon separator to support hyphenated domains
-// Old: "example.com-info" (breaks with my-domain.com)
-// New: "example.com:info" (works with any domain)
+// Used colon separator to support hyphenated domains safely.
 func PoolName(d models.Domain, s models.Sender) string {
-	// Example: "example.com:info" (same as SourceName for consistency)
+	// Example: "example.com:info"
 	return fmt.Sprintf("%s:%s", d.Name, s.LocalPart)
+}
+
+// =======================
+// auth.toml generator (NEW)
+// =======================
+
+func GenerateAuthTOML(snap *Snapshot) string {
+	var b strings.Builder
+	fmt.Fprintln(&b, "# KumoMTA SMTP Authentication Credentials")
+	fmt.Fprintln(&b, "# Format: username = \"password\"")
+	fmt.Fprintln(&b, "")
+
+	for _, d := range snap.Domains {
+		for _, s := range d.Senders {
+			// Only add if a password is set
+			if s.SMTPPassword != "" {
+				// Escape quotes in password just in case
+				safePass := strings.ReplaceAll(s.SMTPPassword, "\"", "\\\"")
+				fmt.Fprintf(&b, "\"%s\" = \"%s\"\n", s.Email, safePass)
+			}
+		}
+	}
+	return b.String()
 }
 
 // =======================
@@ -268,15 +289,28 @@ end)
 	b.WriteString("local sources_data = kumo.toml_load('/opt/kumomta/etc/policy/sources.toml')\n")
 	b.WriteString("local queues_data = kumo.toml_load('/opt/kumomta/etc/policy/queues.toml')\n")
 	b.WriteString("local dkim_data = kumo.toml_load('/opt/kumomta/etc/policy/dkim_data.toml')\n")
-	b.WriteString("local listener_domains = kumo.toml_load('/opt/kumomta/etc/policy/listener_domains.toml')\n\n")
+	b.WriteString("local listener_domains = kumo.toml_load('/opt/kumomta/etc/policy/listener_domains.toml')\n")
+	b.WriteString("local auth_users = kumo.toml_load('/opt/kumomta/etc/policy/auth.toml') -- NEW: Load credentials\n\n")
 
-	// --- 3. Tenant Helper Function ---
-	// FIX: Changed separator from hyphen to colon to support hyphenated domains
+	// --- 3. SMTP Authentication Hook (NEW) ---
+	b.WriteString(`-- =====================================================
+-- SMTP AUTHENTICATION (PLAIN)
+-- =====================================================
+kumo.on('smtp_server_auth_plain', function(auth_user, auth_password)
+  local valid_pass = auth_users[auth_user]
+  if valid_pass and valid_pass == auth_password then
+    return true
+  end
+  return false
+end)
+
+`)
+
+	// --- 4. Tenant Logic (Colon Fixed) ---
 	b.WriteString(`-- =====================================================
 -- TENANT LOGIC
 -- =====================================================
--- FIX: Using colon separator (domain:localpart) to support hyphenated domains
--- Example: my-domain.com:editor -> tenant = "my-domain.com:editor"
+-- Using colon separator (domain:localpart) to support hyphenated domains
 local function get_tenant_from_sender(sender_email)
   if sender_email then
     local localpart, domain = sender_email:match("([^@]+)@(.+)")
@@ -305,10 +339,8 @@ end)
 -- =====================================================
 -- EGRESS POOLS / SOURCES
 -- =====================================================
--- FIX: Pool name now uses colon separator (same as source name)
--- No conversion needed - pool_name IS the source_key
 kumo.on('get_egress_pool', function(pool_name)
-  -- Pool name format: "domain.com:localpart" (same as source name)
+  -- Pool name is already in "domain:localpart" format
   if sources_data[pool_name] then
     return kumo.make_egress_pool {
       name = pool_name,
