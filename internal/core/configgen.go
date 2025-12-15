@@ -10,20 +10,25 @@ import (
 // Naming strategy (can be changed later in one place):
 
 // Egress source name, unique per sender identity.
+// FIX: Using double-underscore (__) as separator because KumoMTA interprets
+// colons in queue/tenant names as internal delimiters.
 func SourceName(d models.Domain, s models.Sender) string {
-	// Example: "example.com:info"
-	return fmt.Sprintf("%s:%s", d.Name, s.LocalPart)
+	// Example: "example.com__info"
+	return fmt.Sprintf("%s__%s", d.Name, s.LocalPart)
 }
 
 // Egress pool / tenant name per sender.
-// Used colon separator to support hyphenated domains safely.
+// FIX: Using double-underscore (__) as separator
+// - Hyphen (-) breaks hyphenated domains like my-domain.com
+// - Colon (:) is interpreted by KumoMTA as internal delimiter
+// - Double-underscore (__) is safe and unambiguous
 func PoolName(d models.Domain, s models.Sender) string {
-	// Example: "example.com:info"
-	return fmt.Sprintf("%s:%s", d.Name, s.LocalPart)
+	// Example: "example.com__info" (same as SourceName for consistency)
+	return fmt.Sprintf("%s__%s", d.Name, s.LocalPart)
 }
 
 // =======================
-// auth.toml generator (NEW)
+// auth.toml generator (SMTP Authentication)
 // =======================
 
 func GenerateAuthTOML(snap *Snapshot) string {
@@ -290,9 +295,9 @@ end)
 	b.WriteString("local queues_data = kumo.toml_load('/opt/kumomta/etc/policy/queues.toml')\n")
 	b.WriteString("local dkim_data = kumo.toml_load('/opt/kumomta/etc/policy/dkim_data.toml')\n")
 	b.WriteString("local listener_domains = kumo.toml_load('/opt/kumomta/etc/policy/listener_domains.toml')\n")
-	b.WriteString("local auth_users = kumo.toml_load('/opt/kumomta/etc/policy/auth.toml') -- NEW: Load credentials\n\n")
+	b.WriteString("local auth_users = kumo.toml_load('/opt/kumomta/etc/policy/auth.toml')\n\n")
 
-	// --- 3. SMTP Authentication Hook (NEW) ---
+	// --- 3. SMTP Authentication Hook ---
 	b.WriteString(`-- =====================================================
 -- SMTP AUTHENTICATION (PLAIN)
 -- =====================================================
@@ -306,16 +311,20 @@ end)
 
 `)
 
-	// --- 4. Tenant Logic (Colon Fixed) ---
+	// --- 4. Tenant Logic (Double-Underscore Separator) ---
 	b.WriteString(`-- =====================================================
 -- TENANT LOGIC
 -- =====================================================
--- Using colon separator (domain:localpart) to support hyphenated domains
+-- FIX: Using double-underscore (__) separator because:
+-- - Hyphen (-) breaks hyphenated domains like my-domain.com
+-- - Colon (:) is interpreted by KumoMTA as internal delimiter
+-- - Double-underscore (__) is safe and unambiguous
+-- Example: editor@my-domain.com -> tenant = "my-domain.com__editor"
 local function get_tenant_from_sender(sender_email)
   if sender_email then
     local localpart, domain = sender_email:match("([^@]+)@(.+)")
     if localpart and domain then
-      return domain .. ":" .. localpart
+      return domain .. "__" .. localpart
     end
   end
   return "default"
@@ -339,8 +348,9 @@ end)
 -- =====================================================
 -- EGRESS POOLS / SOURCES
 -- =====================================================
+-- Pool name uses double-underscore separator: "domain.com__localpart"
 kumo.on('get_egress_pool', function(pool_name)
-  -- Pool name is already in "domain:localpart" format
+  -- Pool name format: "domain.com__localpart" (same as source name)
   if sources_data[pool_name] then
     return kumo.make_egress_pool {
       name = pool_name,
