@@ -14,7 +14,9 @@ import {
   MoreHorizontal,
   Info,
   Shield,
-  X
+  X,
+  Eye,
+  EyeOff
 } from "lucide-react";
 import {
   listDomains,
@@ -48,6 +50,9 @@ export default function Domains() {
     ip: "",
     smtp_password: ""
   });
+  
+  // NEW: Toggle for password visibility
+  const [showPassword, setShowPassword] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -104,6 +109,7 @@ export default function Domains() {
     try {
       await saveSender(senderForm.domainID, senderForm);
       setSenderForm({ domainID: null, id: 0, local_part: "", email: "", ip: "", smtp_password: "" });
+      setShowPassword(false);
       await load();
     } catch (err) { setMsg(err.message); }
   };
@@ -221,7 +227,13 @@ export default function Domains() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Senders</h4>
-                    <button onClick={() => setSenderForm({ domainID: d.id, id: 0, local_part: "", email: "", ip: "", smtp_password: "" })} className="text-xs flex items-center gap-1 text-primary hover:underline">
+                    <button 
+                      onClick={() => {
+                        setSenderForm({ domainID: d.id, id: 0, local_part: "", email: "", ip: "", smtp_password: "" });
+                        setShowPassword(false);
+                      }} 
+                      className="text-xs flex items-center gap-1 text-primary hover:underline"
+                    >
                       <Plus className="w-3 h-3" /> Add Sender
                     </button>
                   </div>
@@ -243,7 +255,15 @@ export default function Domains() {
                             </div>
                           </div>
                           <div className="flex gap-1">
-                            <button onClick={() => setSenderForm({ domainID: d.id, ...s })} className="p-1.5 hover:bg-muted rounded text-muted-foreground"><Edit2 className="w-3 h-3" /></button>
+                            <button 
+                              onClick={() => {
+                                setSenderForm({ domainID: d.id, ...s });
+                                setShowPassword(false);
+                              }} 
+                              className="p-1.5 hover:bg-muted rounded text-muted-foreground"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
                             <button onClick={() => handleDeleteSender(s.id)} className="p-1.5 hover:bg-destructive/10 hover:text-destructive rounded text-muted-foreground"><Trash2 className="w-3 h-3" /></button>
                           </div>
                         </div>
@@ -362,12 +382,40 @@ export default function Domains() {
                   {systemIPs.map(ip => <option key={ip.id} value={ip.value}>{ip.value} ({ip.interface})</option>)}
                 </select>
               </div>
+              
+              {/* UPDATED: Password Field with Eye Toggle */}
               <div className="space-y-2">
                 <label className="text-sm font-medium">SMTP Password</label>
-                <input type="password" className="w-full h-10 px-3 rounded-md border bg-background" value={senderForm.smtp_password} onChange={e => setSenderForm({...senderForm, smtp_password: e.target.value})} placeholder="Leave blank to keep current" />
+                <div className="relative">
+                  <input 
+                    type={showPassword ? "text" : "password"} 
+                    className="w-full h-10 px-3 pr-10 rounded-md border bg-background text-sm" 
+                    value={senderForm.smtp_password} 
+                    onChange={e => setSenderForm({...senderForm, smtp_password: e.target.value})} 
+                    placeholder="Leave blank to keep current" 
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-2 top-2.5 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Used for AUTH LOGIN/PLAIN.</p>
               </div>
+
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setSenderForm({ domainID: null, id: 0, local_part: "", email: "", ip: "", smtp_password: "" })} className="px-4 py-2 text-sm rounded-md hover:bg-muted">Cancel</button>
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setSenderForm({ domainID: null, id: 0, local_part: "", email: "", ip: "", smtp_password: "" });
+                    setShowPassword(false);
+                  }} 
+                  className="px-4 py-2 text-sm rounded-md hover:bg-muted"
+                >
+                  Cancel
+                </button>
                 <button type="submit" className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90">Save</button>
               </div>
             </form>
