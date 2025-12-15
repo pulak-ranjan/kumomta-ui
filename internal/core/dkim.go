@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -23,7 +24,7 @@ func dkimKeyPaths(domain, selector string) (privPath, pubPath, dir string) {
 	return
 }
 
-// FIX: New helper to check if DKIM key exists
+// Check if DKIM key exists
 func DKIMKeyExists(domain, selector string) bool {
 	privPath, _, _ := dkimKeyPaths(domain, selector)
 	if _, err := os.Stat(privPath); err == nil {
@@ -32,7 +33,7 @@ func DKIMKeyExists(domain, selector string) bool {
 	return false
 }
 
-// GenerateDKIMKey creates a new RSA keypair
+// GenerateDKIMKey creates a new RSA keypair and sets ownership to kumod
 func GenerateDKIMKey(domain, selector string) error {
 	privPath, pubPath, dir := dkimKeyPaths(domain, selector)
 
@@ -63,14 +64,22 @@ func GenerateDKIMKey(domain, selector string) error {
 		Bytes: pubBytes,
 	})
 
-	// Write private key
+	// Write private key (0600 - secure)
 	if err := os.WriteFile(privPath, privPem, 0o600); err != nil {
 		return fmt.Errorf("write private key: %w", err)
 	}
 
-	// Write public key
+	// Write public key (0644 - readable)
 	if err := os.WriteFile(pubPath, pubPem, 0o644); err != nil {
 		return fmt.Errorf("write public key: %w", err)
+	}
+
+	// --- FIX: Change ownership to kumod:kumod so the MTA can read it ---
+	// We chown the directory recursively to ensure the folder is also accessible
+	cmd := exec.Command("chown", "-R", "kumod:kumod", dir)
+	if err := cmd.Run(); err != nil {
+		// Log warning but don't fail, in case user doesn't exist on dev env
+		fmt.Printf("Warning: failed to chown DKIM keys to kumod: %v\n", err)
 	}
 
 	return nil
