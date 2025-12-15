@@ -267,8 +267,10 @@ end)
 	b.WriteString("local dkim_data = kumo.toml_load('/opt/kumomta/etc/policy/dkim_data.toml')\n")
 	b.WriteString("local listener_domains = kumo.toml_load('/opt/kumomta/etc/policy/listener_domains.toml')\n\n")
 
-	// --- 3. Routing Logic ---
-	b.WriteString(`
+	// --- 3. Tenant Helper Function ---
+	b.WriteString(`-- =====================================================
+-- TENANT LOGIC
+-- =====================================================
 local function get_tenant_from_sender(sender_email)
   if sender_email then
     local localpart, domain = sender_email:match("([^@]+)@(.+)")
@@ -279,6 +281,9 @@ local function get_tenant_from_sender(sender_email)
   return "default"
 end
 
+-- =====================================================
+-- LISTENER DOMAIN CONFIG
+-- =====================================================
 kumo.on('get_listener_domain', function(domain, listener, conn_meta)
   if listener_domains[domain] then
     local config = listener_domains[domain]
@@ -291,24 +296,27 @@ kumo.on('get_listener_domain', function(domain, listener, conn_meta)
   return kumo.make_listener_domain { relay_to = false }
 end)
 
+-- =====================================================
+-- EGRESS POOLS / SOURCES
+-- =====================================================
 kumo.on('get_egress_pool', function(pool_name)
   local source_key = pool_name:gsub("-", ":", 1)
   if sources_data[source_key] then
-     return kumo.make_egress_pool {
-       name = pool_name,
-       entries = { { name = source_key } },
-     }
+    return kumo.make_egress_pool {
+      name = pool_name,
+      entries = { { name = source_key } },
+    }
   end
   return kumo.make_egress_pool { name = pool_name, entries = {} }
 end)
 
 kumo.on('get_egress_source', function(source_name)
-  if sources_data[source_name] then
-    local config = sources_data[source_name]
+  local cfg = sources_data[source_name]
+  if cfg then
     return kumo.make_egress_source {
       name = source_name,
-      source_address = config.source_address,
-      ehlo_domain = config.ehlo_domain,
+      source_address = cfg.source_address,
+      ehlo_domain = cfg.ehlo_domain,
     }
   end
   return kumo.make_egress_source { name = source_name }
@@ -321,98 +329,84 @@ kumo.on('get_egress_path_config', function(domain, egress_source, site_name)
   }
 end)
 
+-- =====================================================
+-- QUEUE CONFIG
+-- =====================================================
 kumo.on('get_queue_config', function(domain, tenant, campaign, routing_domain)
-  local tenant_key = 'tenant:' .. tenant
-  local tenant_config = queues_data[tenant_key] or {}
-
-  local params = {
-    egress_pool = tenant_config.egress_pool or tenant,
-    retry_interval = tenant_config.retry_interval or '1m',
-    max_age = tenant_config.max_age or '3d',
-    max_message_rate = tenant_config.max_message_rate,
+  tenant = tenant or "default"
+  local cfg = queues_data['tenant:' .. tenant] or {}
+  return kumo.make_queue_config {
+    egress_pool = cfg.egress_pool or tenant,
+    retry_interval = cfg.retry_interval or '1m',
+    max_age = cfg.max_age or '3d',
+    max_message_rate = cfg.max_message_rate,
   }
-  return kumo.make_queue_config(params)
 end)
 
-local function sign_with_dkim(msg)
+-- =====================================================
+-- DKIM SIGNING (IDENTITY-BASED)
+-- =====================================================
+local function dkim_sign_message(msg)
   local sender = msg:from_header()
-  if not sender then return end
-  
+  if not sender then
+    kumo.log_error("DKIM: missing From header")
+    return
+  end
+
   local sender_email = sender.email:lower()
   local sender_domain = sender.domain:lower()
 
-  local domain_key = 'domain.' .. sender_domain
-  local domain_config = dkim_data[domain_key]
+  local domain_cfg = dkim_data.domain[sender_domain]
+  if not domain_cfg or not domain_cfg.policy then
+    kumo.log_error("DKIM: no DKIM config for domain " .. sender_domain)
+    return
+  end
 
-  if not domain_config then return end
-
-  if domain_config.policy then
-    for _, policy in ipairs(domain_config.policy) do
-      if policy.match_sender and sender_email == policy.match_sender:lower() then
-        local signer = kumo.dkim.rsa_sha256_signer {
-          domain = sender_domain,
-          selector = policy.selector,
-          headers = domain_config.headers or { 'From', 'To', 'Subject', 'Date', 'Message-ID', 'List-Unsubscribe' },
-          key = { key_file = policy.filename },
-        }
-        msg:dkim_sign(signer)
-        return
-      end
+  for _, policy in ipairs(domain_cfg.policy) do
+    if sender_email == policy.match_sender:lower() then
+      msg:dkim_sign(kumo.dkim.rsa_sha256_signer {
+        domain = sender_domain,
+        selector = policy.selector,
+        headers = domain_cfg.headers,
+        key = policy.filename,
+      })
+      return
     end
   end
+
+  kumo.log_error("DKIM: no identity match for " .. sender_email)
 end
 
--- --- HEADER SCRUBBER & SIGNER ---
-local function scrub_and_sign(msg)
-  -- 1. Remove identifying headers
+-- =====================================================
+-- HEADER SCRUBBING + SAFE RECEIVED HEADER
+-- =====================================================
+local function scrub_headers(msg)
   msg:remove_all_named_headers('User-Agent')
   msg:remove_all_named_headers('X-Mailer')
   msg:remove_all_named_headers('X-Originating-IP')
-  msg:remove_all_named_headers('X-Report-Abuse') 
+  msg:remove_all_named_headers('X-Report-Abuse')
   msg:remove_all_named_headers('X-EBS')
-  
-  -- We do NOT remove X-RefID (our renamed KumoRef) to keep bounces working
   msg:remove_x_headers { 'x-campaign', 'x-tenant', 'x-kumomta' }
 
-  -- 2. Add Generic "Received" Header (Fake Postfix style)
   local remote_ip = msg:get_meta('received_from_ip') or '127.0.0.1'
-  -- FIX: Use os.date instead of kumo.now()
   local timestamp = os.date("%a, %d %b %Y %H:%M:%S %z")
-  
+  local rcpt = msg:recipient() or "unknown"
+
   msg:prepend_header('Received', string.format(
     "from %s ([%s])\r\n\tby %s (Postfix) with ESMTPS\r\n\tfor <%s>; %s",
     msg:get_meta('received_from_name') or 'localhost',
     remote_ip,
-    '` + mainHostname + `',
-    msg:recipient(),
+    '`)
+	b.WriteString(mainHostname)
+	b.WriteString(`',
+    rcpt,
     timestamp
   ))
-
-  -- 3. Sign with DKIM
-  local sender = msg:from_header()
-  if not sender then return end
-  
-  local sender_email = sender.email:lower()
-  local sender_domain = sender.domain:lower()
-  local domain_key = 'domain.' .. sender_domain
-  local domain_config = dkim_data[domain_key]
-
-  if domain_config and domain_config.policy then
-    for _, policy in ipairs(domain_config.policy) do
-      if policy.match_sender and sender_email == policy.match_sender:lower() then
-        local signer = kumo.dkim.rsa_sha256_signer {
-          domain = sender_domain,
-          selector = policy.selector,
-          headers = domain_config.headers or { 'From', 'To', 'Subject', 'Date', 'Message-ID', 'List-Unsubscribe' },
-          key = { key_file = policy.filename },
-        }
-        msg:dkim_sign(signer)
-        return
-      end
-    end
-  end
 end
 
+-- =====================================================
+-- SMTP PATH
+-- =====================================================
 kumo.on('smtp_server_message_received', function(msg)
   local sender = msg:from_header()
   local sender_email = sender and sender.email or ""
@@ -423,9 +417,13 @@ kumo.on('smtp_server_message_received', function(msg)
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
 
-  scrub_and_sign(msg)
+  scrub_headers(msg)
+  dkim_sign_message(msg)
 end)
 
+-- =====================================================
+-- HTTP / API PATH
+-- =====================================================
 kumo.on('http_message_generated', function(msg)
   local tenant = msg:get_first_named_header_value('X-Tenant')
   if not tenant then
@@ -434,14 +432,17 @@ kumo.on('http_message_generated', function(msg)
     tenant = get_tenant_from_sender(sender_email)
   end
   msg:set_meta('tenant', tenant)
-  
+
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
 
-  scrub_and_sign(msg)
+  scrub_headers(msg)
+  dkim_sign_message(msg)
 end)
 
--- Optional: Custom Hook (Safe place for manual overrides)
+-- =====================================================
+-- OPTIONAL: Custom Hook (Safe place for manual overrides)
+-- =====================================================
 pcall(dofile, '/opt/kumomta/etc/policy/custom.lua')
 `)
 
