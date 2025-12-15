@@ -14,6 +14,7 @@ const (
 	KumoQueuesPath          = "/opt/kumomta/etc/policy/queues.toml"
 	KumoListenerDomainsPath = "/opt/kumomta/etc/policy/listener_domains.toml"
 	KumoDKIMDataPath        = "/opt/kumomta/etc/policy/dkim_data.toml"
+	KumoAuthPath            = "/opt/kumomta/etc/policy/auth.toml" // <--- NEW
 	KumoInitLuaPath         = "/opt/kumomta/etc/policy/init.lua"
 
 	KumoBinary = "/opt/kumomta/sbin/kumod"
@@ -44,11 +45,11 @@ func ApplyKumoConfig(snap *Snapshot) (*ApplyResult, error) {
 	}
 
 	// 2. Generate "Perfect" Content from Database
-	// These functions (in configgen.go) ensure all DB records are included.
 	sources := GenerateSourcesTOML(snap)
 	queues := GenerateQueuesTOML(snap)
 	listenerDomains := GenerateListenerDomainsTOML(snap)
 	dkimData := GenerateDKIMDataTOML(snap, "/opt/kumomta/etc/dkim")
+	authData := GenerateAuthTOML(snap) // <--- NEW
 	initLua := GenerateInitLua(snap)
 
 	// Helper: Smart Update
@@ -70,6 +71,10 @@ func ApplyKumoConfig(snap *Snapshot) (*ApplyResult, error) {
 	}
 	if err := applyFile(KumoDKIMDataPath, dkimData); err != nil {
 		return nil, fmt.Errorf("failed to apply dkim_data.toml: %w", err)
+	}
+	// Apply Auth Config
+	if err := applyFile(KumoAuthPath, authData); err != nil {
+		return nil, fmt.Errorf("failed to apply auth.toml: %w", err)
 	}
 	// This heals init.lua if it's missing the new logic
 	if err := applyFile(KumoInitLuaPath, initLua); err != nil {
@@ -129,8 +134,6 @@ func smartUpdateFile(path string, data []byte, perm os.FileMode) error {
 
 		// 3. DIFFERENT: Create Backup
 		backupPath := path + ".bak"
-		// We ignore backup errors (e.g. permission) to prioritize system recovery,
-		// but typically this succeeds.
 		_ = os.WriteFile(backupPath, existing, perm)
 	}
 
