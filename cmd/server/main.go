@@ -46,20 +46,45 @@ func main() {
 
 func startScheduler(ws *core.WebhookService) {
 	log.Println("Starting background scheduler...")
+
+	// Run startup checks immediately (non-blocking)
+	go func() {
+		log.Println("[Scheduler] Running initial startup checks...")
+
+		// 1. Warmup (catch up on missing cycles)
+		if err := core.ProcessDailyWarmup(ws.Store); err != nil {
+			log.Printf("Warmup startup check error: %v", err)
+		}
+
+		// 2. Security & Compliance
+		ws.RunSecurityAudit()
+		ws.CheckBlacklists(false) // Silent unless issues found
+
+		// 3. Stats & Alerts
+		ws.CheckBounceRates()
+
+		// 4. Backup (if missing/stale)
+		if err := core.EnsureRecentBackup(); err != nil {
+			log.Printf("Backup startup check error: %v", err)
+		}
+	}()
+
 	dailyTicker := time.NewTicker(24 * time.Hour)
 	hourlyTicker := time.NewTicker(1 * time.Hour)
+	warmupTicker := time.NewTicker(30 * time.Minute) // Check every 30 mins
 
 	for {
 		select {
-		case <-dailyTicker.C:
-			log.Println("[Scheduler] Running daily tasks...")
-			
-			// 1. Process Warmup Schedules (NEW)
+		case <-warmupTicker.C:
+			// Run frequent checks for warmup progression
 			if err := core.ProcessDailyWarmup(ws.Store); err != nil {
 				log.Printf("Warmup error: %v", err)
 			}
 
-			// 2. Daily Summary
+		case <-dailyTicker.C:
+			log.Println("[Scheduler] Running daily tasks...")
+
+			// 1. Daily Summary
 			if stats, err := core.GetAllDomainsStats(1); err == nil {
 				ws.SendDailySummary(stats)
 			}
