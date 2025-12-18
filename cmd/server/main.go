@@ -46,20 +46,31 @@ func main() {
 
 func startScheduler(ws *core.WebhookService) {
 	log.Println("Starting background scheduler...")
+
+	// Run warmup check immediately on startup to catch up
+	go func() {
+		log.Println("[Scheduler] Running initial warmup check...")
+		if err := core.ProcessDailyWarmup(ws.Store); err != nil {
+			log.Printf("Warmup error: %v", err)
+		}
+	}()
+
 	dailyTicker := time.NewTicker(24 * time.Hour)
 	hourlyTicker := time.NewTicker(1 * time.Hour)
+	warmupTicker := time.NewTicker(30 * time.Minute) // Check every 30 mins
 
 	for {
 		select {
-		case <-dailyTicker.C:
-			log.Println("[Scheduler] Running daily tasks...")
-			
-			// 1. Process Warmup Schedules (NEW)
+		case <-warmupTicker.C:
+			// Run frequent checks for warmup progression
 			if err := core.ProcessDailyWarmup(ws.Store); err != nil {
 				log.Printf("Warmup error: %v", err)
 			}
 
-			// 2. Daily Summary
+		case <-dailyTicker.C:
+			log.Println("[Scheduler] Running daily tasks...")
+
+			// 1. Daily Summary
 			if stats, err := core.GetAllDomainsStats(1); err == nil {
 				ws.SendDailySummary(stats)
 			}
