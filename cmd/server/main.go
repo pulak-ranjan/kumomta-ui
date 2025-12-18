@@ -56,14 +56,20 @@ func startScheduler(ws *core.WebhookService) {
 			log.Printf("Warmup startup check error: %v", err)
 		}
 
-		// 2. Security & Compliance
+		// 2. Campaigns (Resume interrupted jobs)
+		cs := core.NewCampaignService(ws.Store)
+		if err := cs.ResumeInterruptedCampaigns(); err != nil {
+			log.Printf("Campaign resumption error: %v", err)
+		}
+
+		// 3. Security & Compliance
 		ws.RunSecurityAudit()
 		ws.CheckBlacklists(false) // Silent unless issues found
 
-		// 3. Stats & Alerts
+		// 4. Stats & Alerts
 		ws.CheckBounceRates()
 
-		// 4. Backup (if missing/stale)
+		// 5. Backup (if missing/stale)
 		if err := core.EnsureRecentBackup(); err != nil {
 			log.Printf("Backup startup check error: %v", err)
 		}
@@ -71,7 +77,7 @@ func startScheduler(ws *core.WebhookService) {
 
 	dailyTicker := time.NewTicker(24 * time.Hour)
 	hourlyTicker := time.NewTicker(1 * time.Hour)
-	warmupTicker := time.NewTicker(30 * time.Minute) // Check every 30 mins
+	warmupTicker := time.NewTicker(5 * time.Minute) // Check every 5 mins
 
 	for {
 		select {

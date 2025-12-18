@@ -162,3 +162,28 @@ type ChatLog struct {
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// Campaign represents a bulk email job
+type Campaign struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Name        string    `json:"name"`
+	Subject     string    `json:"subject"`
+	Body        string    `json:"body"`          // HTML Content
+	SenderID    uint      `json:"sender_id"`     // From which Sender identity
+	Sender      Sender    `json:"-" gorm:"foreignKey:SenderID"`
+	Status      string    `json:"status"`        // "draft", "sending", "completed", "failed"
+	TotalSent   int       `json:"total_sent"`
+	TotalFailed int       `json:"total_failed"`
+	CreatedAt   time.Time `json:"created_at"`
+	Recipients  []CampaignRecipient `json:"recipients,omitempty" gorm:"foreignKey:CampaignID"`
+}
+
+// CampaignRecipient tracks individual status in a campaign
+type CampaignRecipient struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	CampaignID uint      `gorm:"index" json:"campaign_id"`
+	Email      string    `gorm:"index" json:"email"`
+	Status     string    `json:"status"` // "pending", "sent", "failed"
+	Error      string    `json:"error,omitempty"`
+	SentAt     time.Time `json:"sent_at,omitempty"`
+}

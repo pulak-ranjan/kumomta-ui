@@ -165,6 +165,9 @@ func (s *Server) routes() chi.Router {
 
 		// Bulk Import
 		r.Post("/api/import/csv", s.handleCSVImport)
+
+		// Campaigns
+		r.Route("/api/campaigns", NewCampaignHandler(s.Store).Routes)
 	})
 
 	return r
