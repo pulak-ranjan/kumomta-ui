@@ -168,6 +168,27 @@ func (s *Server) routes() chi.Router {
 
 		// Campaigns
 		r.Route("/api/campaigns", NewCampaignHandler(s.Store).Routes)
+
+		// Tracking (Public, no auth)
+		// Note: TrackingHandler methods need to be wrapped or unprotected.
+		// Since this group is protected, we must move tracking OUTSIDE or use skip logic.
+	})
+
+	// --- Tracking Routes (Unprotected) ---
+	tracking := NewTrackingHandler(s.Store)
+	r.Get("/api/track/open/{id}", tracking.HandleTrackOpen)
+	r.Get("/api/track/click/{id}", tracking.HandleTrackClick)
+
+	// --- Analytics (Protected) ---
+	r.Group(func(r chi.Router) {
+		r.Use(s.authMiddleware)
+		analytics := NewAnalyticsHandler(s.Store)
+		r.Get("/api/analytics/top-leads", analytics.GetTopLeads)
+		r.Get("/api/analytics/campaign-summary", analytics.GetCampaignSummary)
+
+		contacts := NewContactHandler(s.Store)
+		r.Post("/api/contacts/verify", contacts.HandleVerifyEmail)
+		r.Post("/api/lists/{id}/clean", contacts.HandleCleanList)
 	})
 
 	return r

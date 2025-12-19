@@ -163,6 +163,35 @@ type ChatLog struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ContactList represents a managed list of contacts
+type ContactList struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	Contacts  []Contact `json:"contacts,omitempty" gorm:"foreignKey:ListID"`
+}
+
+// Contact represents a single person/lead
+type Contact struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	ListID    uint      `gorm:"index" json:"list_id"`
+	Email     string    `gorm:"index" json:"email"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
+
+	// Validation Status
+	IsValid   bool      `json:"is_valid"`
+	RiskScore int       `json:"risk_score"` // 0-100 (0=safe)
+	VerifyLog string    `json:"verify_log"` // "MX ok, SMTP failed"
+
+	// Engagement (AI Superlead data)
+	Score     int       `json:"score"`      // Lead Score
+	TotalOpens int      `json:"total_opens"`
+	TotalClicks int     `json:"total_clicks"`
+
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // Campaign represents a bulk email job
 type Campaign struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
@@ -171,9 +200,15 @@ type Campaign struct {
 	Body        string    `json:"body"`          // HTML Content
 	SenderID    uint      `json:"sender_id"`     // From which Sender identity
 	Sender      Sender    `json:"-" gorm:"foreignKey:SenderID"`
-	Status      string    `json:"status"`        // "draft", "sending", "completed", "failed"
+
+	Status      string    `json:"status"`        // "draft", "scheduled", "sending", "completed", "failed"
+	ScheduledAt *time.Time `json:"scheduled_at"` // Nullable
+
 	TotalSent   int       `json:"total_sent"`
 	TotalFailed int       `json:"total_failed"`
+	TotalOpens  int       `json:"total_opens"`
+	TotalClicks int       `json:"total_clicks"`
+
 	CreatedAt   time.Time `json:"created_at"`
 	Recipients  []CampaignRecipient `json:"recipients,omitempty" gorm:"foreignKey:CampaignID"`
 }
@@ -183,7 +218,13 @@ type CampaignRecipient struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
 	CampaignID uint      `gorm:"index" json:"campaign_id"`
 	Email      string    `gorm:"index" json:"email"`
+	ContactID  uint      `gorm:"index" json:"contact_id"` // Optional link to persistent contact
+
 	Status     string    `json:"status"` // "pending", "sent", "failed"
 	Error      string    `json:"error,omitempty"`
 	SentAt     time.Time `json:"sent_at,omitempty"`
+
+	// Tracking
+	OpenedAt   *time.Time `json:"opened_at"`
+	ClickedAt  *time.Time `json:"clicked_at"`
 }

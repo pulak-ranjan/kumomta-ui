@@ -118,27 +118,26 @@ func (cs *CampaignService) processCampaign(c models.Campaign) {
 	client, err := smtp.Dial(addr)
 	if err != nil {
 		log.Printf("Campaign %d: Failed to connect to SMTP: %v", c.ID, err)
-		// Mark pending as failed? Or just retry later?
-		// For now, abort this run.
 		return
 	}
 	defer client.Quit()
 
 	// Construct message common headers
-	// Note: Minimal headers. KumoMTA will add Date/Message-ID/DKIM if configured.
-	headers := fmt.Sprintf("From: %s\r\nSubject: %s\r\nX-Campaign: %d\r\nX-Kumo-Ref: Bulk\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n",
-		sender.Email, c.Subject, c.ID)
+	// Security: Sanitize subject to prevent header injection
+	safeSubject := strings.ReplaceAll(c.Subject, "\r", "")
+	safeSubject = strings.ReplaceAll(safeSubject, "\n", "")
+
+	baseHeaders := fmt.Sprintf("From: %s\r\nSubject: %s\r\nX-Campaign: %d\r\nX-Kumo-Ref: Bulk\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n",
+		sender.Email, safeSubject, c.ID)
 
 	for _, r := range recipients {
 		// Send via persistent SMTP connection
 		if err := client.Mail(sender.Email); err != nil {
-			// Reconnect logic could go here
 			log.Printf("SMTP Mail error: %v", err)
 			break
 		}
 		if err := client.Rcpt(r.Email); err != nil {
 			log.Printf("SMTP Rcpt error: %v", err)
-			// Reset and continue?
 			client.Reset()
 			continue
 		}
@@ -148,8 +147,25 @@ func (cs *CampaignService) processCampaign(c models.Campaign) {
 			break
 		}
 
+		// Inject Tracking Pixel
+		baseURL := "http://localhost:9000"
+		if settings, err := cs.Store.GetSettings(); err == nil && settings.MainHostname != "" {
+			// Assuming MainHostname is just the domain (e.g. mta.example.com).
+			// We need schema. Usually if certs are installed it's https.
+			// Ideally we store a full BaseURL or derive it. For now, assume HTTPS for safety if not localhost.
+			protocol := "https"
+			if settings.MainHostname == "localhost" { protocol = "http" }
+			baseURL = fmt.Sprintf("%s://%s", protocol, settings.MainHostname)
+		}
+
+		trackingURL := fmt.Sprintf("%s/api/track/open/%d", baseURL, r.ID)
+		pixel := fmt.Sprintf(`<img src="%s" alt="" width="1" height="1" style="display:none" />`, trackingURL)
+
+		bodyWithPixel := c.Body + "\n" + pixel
+
 		// Body
-		msg := fmt.Sprintf("To: %s\r\n%s%s", r.Email, headers, c.Body)
+		msg := fmt.Sprintf("To: %s\r\n%s%s", r.Email, baseHeaders, bodyWithPixel)
+
 		if _, err = wc.Write([]byte(msg)); err != nil {
 			log.Printf("SMTP Write error: %v", err)
 		}
