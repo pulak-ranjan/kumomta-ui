@@ -3,8 +3,11 @@ package core
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -235,4 +238,17 @@ func Decrypt(ciphertext string) (string, error) {
 	}
 
 	return string(plaintext), nil
+}
+
+// HMAC Signing for Click Tracking
+func SignLink(url string) string {
+	key := getEncryptionKey()
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(url))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func VerifyLinkSignature(url, signature string) bool {
+	expected := SignLink(url)
+	return hmac.Equal([]byte(expected), []byte(signature))
 }

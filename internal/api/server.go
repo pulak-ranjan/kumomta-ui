@@ -189,6 +189,11 @@ func (s *Server) routes() chi.Router {
 		contacts := NewContactHandler(s.Store)
 		r.Post("/api/contacts/verify", contacts.HandleVerifyEmail)
 		r.Post("/api/lists/{id}/clean", contacts.HandleCleanList)
+
+		// Automation & WhatsApp
+		wa := NewWhatsAppHandler(s.Store)
+		r.Post("/api/whatsapp/send", wa.HandleSend)
+		r.Post("/api/whatsapp/webhook", wa.HandleWebhook)
 	})
 
 	return r

@@ -38,9 +38,18 @@ func (h *ContactHandler) HandleVerifyEmail(w http.ResponseWriter, r *http.Reques
 		proxyURL = s.ProxyURL
 	}
 
+	// Fetch Source IPs
+	var sourceIPs []string
+	if ips, err := h.Store.ListSystemIPs(); err == nil {
+		for _, ip := range ips {
+			sourceIPs = append(sourceIPs, ip.Value)
+		}
+	}
+
 	opts := core.VerifierOptions{
-		HeloHost: hostname,
-		ProxyURL: proxyURL,
+		HeloHost:  hostname,
+		ProxyURL:  proxyURL,
+		SourceIPs: sourceIPs,
 	}
 
 	result := core.VerifyEmail(req.Email, opts)
@@ -67,9 +76,18 @@ func (h *ContactHandler) HandleCleanList(w http.ResponseWriter, r *http.Request)
 		proxyURL = s.ProxyURL
 	}
 
+	// Fetch Source IPs
+	var sourceIPs []string
+	if ips, err := h.Store.ListSystemIPs(); err == nil {
+		for _, ip := range ips {
+			sourceIPs = append(sourceIPs, ip.Value)
+		}
+	}
+
 	opts := core.VerifierOptions{
-		HeloHost: hostname,
-		ProxyURL: proxyURL,
+		HeloHost:  hostname,
+		ProxyURL:  proxyURL,
+		SourceIPs: sourceIPs,
 	}
 
 	// Run cleaning in background (simple approach)
@@ -77,7 +95,7 @@ func (h *ContactHandler) HandleCleanList(w http.ResponseWriter, r *http.Request)
 		for _, c := range contacts {
 			res := core.VerifyEmail(c.Email, opts)
 
-			c.IsValid = res.IsValid
+			c.IsValid = (res.IsReachable == "safe")
 			c.RiskScore = res.RiskScore
 			c.VerifyLog = res.Log
 

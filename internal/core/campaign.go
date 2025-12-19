@@ -285,8 +285,47 @@ func rewriteLinks(html string, baseURL string, recipientID uint) string {
 		encodedURL := url.QueryEscape(originalURL)
 
 		// Construct tracking URL
-		trackingURL := fmt.Sprintf("%s/api/track/click/%d?url=%s", baseURL, recipientID, encodedURL)
+		// We sign the original URL to prevent tampering/open redirects
+		signature := SignLink(originalURL)
+		trackingURL := fmt.Sprintf("%s/api/track/click/%d?url=%s&sig=%s", baseURL, recipientID, encodedURL, signature)
 
 		return fmt.Sprintf("href=%s%s%s", quote, trackingURL, quote)
 	})
+}
+
+// SendSingleEmail sends a transactional email via local KumoMTA
+func (cs *CampaignService) SendSingleEmail(to string, subject string, body string, senderID uint) error {
+	var sender models.Sender
+	if err := cs.Store.DB.Preload("Domain").First(&sender, senderID).Error; err != nil {
+		return fmt.Errorf("sender not found: %v", err)
+	}
+
+	addr := "127.0.0.1:25"
+	// Use DialTimeout for robustness
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return err
+	}
+
+	client, err := smtp.NewClient(conn, "localhost")
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	defer client.Quit()
+
+	if err := client.Mail(sender.Email); err != nil { return err }
+	if err := client.Rcpt(to); err != nil { return err }
+
+	wc, err := client.Data()
+	if err != nil { return err }
+
+	// Simple Headers
+	headers := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n",
+		sender.Email, to, subject)
+
+	msg := []byte(headers + body)
+
+	if _, err = wc.Write(msg); err != nil { return err }
+	return wc.Close()
 }

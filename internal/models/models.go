@@ -231,3 +231,24 @@ type CampaignRecipient struct {
 	OpenedAt   *time.Time `json:"opened_at"`
 	ClickedAt  *time.Time `json:"clicked_at"`
 }
+
+// AutomationWorkflow represents a visual automation flow
+type AutomationWorkflow struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `json:"name"`
+	Trigger   string    `json:"trigger"` // e.g. "contact_added", "email_opened"
+	StepsJSON string    `json:"steps"`   // JSON array of steps (React Flow format)
+	IsActive  bool      `json:"is_active"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// WhatsAppMessage represents a message sent via WhatsApp Cloud API
+type WhatsAppMessage struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	ContactID   uint      `gorm:"index" json:"contact_id"`
+	ToNumber    string    `json:"to_number"`
+	Body        string    `json:"body"`
+	Status      string    `json:"status"` // sent, delivered, read
+	MessageSID  string    `json:"message_sid"`
+	CreatedAt   time.Time `json:"created_at"`
+}
