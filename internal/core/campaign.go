@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/smtp"
 	"strings"
 	"time"
@@ -106,98 +107,158 @@ func (cs *CampaignService) ResumeInterruptedCampaigns() error {
 	return nil
 }
 
-func (cs *CampaignService) processCampaign(c models.Campaign) {
-	var recipients []models.CampaignRecipient
-	// Fetch pending recipients
-	cs.Store.DB.Where("campaign_id = ? AND status = 'pending'", c.ID).Find(&recipients)
+// StartScheduledCampaigns finds campaigns ready to send and launches them
+func (cs *CampaignService) StartScheduledCampaigns() error {
+	var campaigns []models.Campaign
+	now := time.Now()
 
+	if err := cs.Store.DB.Where("status = 'scheduled' AND scheduled_at <= ?", now).Find(&campaigns).Error; err != nil {
+		return err
+	}
+
+	for _, c := range campaigns {
+		// Atomic update to prevent double-send race conditions
+		result := cs.Store.DB.Model(&c).Where("status = 'scheduled'").Update("status", "sending")
+		if result.RowsAffected == 0 {
+			continue // Already picked up by another worker?
+		}
+
+		// Reload full object with preload
+		if err := cs.Store.DB.Preload("Sender").Preload("Sender.Domain").First(&c, c.ID).Error; err != nil {
+			log.Printf("Failed to load scheduled campaign %d: %v", c.ID, err)
+			continue
+		}
+
+		log.Printf("Starting scheduled campaign %d: %s", c.ID, c.Name)
+		go cs.processCampaign(c)
+	}
+	return nil
+}
+
+func (cs *CampaignService) processCampaign(c models.Campaign) {
+	batchSize := 100
 	sender := c.Sender
 	addr := "127.0.0.1:25"
 
-	// Open persistent SMTP connection
-	client, err := smtp.Dial(addr)
+	// Construct message common headers
+	safeSubject := strings.ReplaceAll(c.Subject, "\r", "")
+	safeSubject = strings.ReplaceAll(safeSubject, "\n", "")
+	baseHeaders := fmt.Sprintf("From: %s\r\nSubject: %s\r\nX-Campaign: %d\r\nX-Kumo-Ref: Bulk\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n",
+		sender.Email, safeSubject, c.ID)
+
+	// Determine Base URL for tracking
+	baseURL := "http://localhost:9000"
+	if settings, err := cs.Store.GetSettings(); err == nil && settings.MainHostname != "" {
+		protocol := "https"
+		if settings.MainHostname == "localhost" { protocol = "http" }
+		baseURL = fmt.Sprintf("%s://%s", protocol, settings.MainHostname)
+	}
+
+	// Persistent Connection
+	// We use DialTimeout to avoid hanging if local MTA is stuck
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		log.Printf("Campaign %d: Failed to connect to SMTP: %v", c.ID, err)
+		c.Status = "failed"
+		cs.Store.DB.Save(&c)
+		return
+	}
+
+	client, err := smtp.NewClient(conn, "localhost")
+	if err != nil {
+		conn.Close()
+		log.Printf("Campaign %d: SMTP Client handshake failed: %v", c.ID, err)
+		c.Status = "failed"
+		cs.Store.DB.Save(&c)
 		return
 	}
 	defer client.Quit()
 
-	// Construct message common headers
-	// Security: Sanitize subject to prevent header injection
-	safeSubject := strings.ReplaceAll(c.Subject, "\r", "")
-	safeSubject = strings.ReplaceAll(safeSubject, "\n", "")
-
-	baseHeaders := fmt.Sprintf("From: %s\r\nSubject: %s\r\nX-Campaign: %d\r\nX-Kumo-Ref: Bulk\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n",
-		sender.Email, safeSubject, c.ID)
-
-	for _, r := range recipients {
-		// Send via persistent SMTP connection
-		if err := client.Mail(sender.Email); err != nil {
-			log.Printf("SMTP Mail error: %v", err)
-			break
-		}
-		if err := client.Rcpt(r.Email); err != nil {
-			log.Printf("SMTP Rcpt error: %v", err)
-			client.Reset()
-			continue
-		}
-		wc, err := client.Data()
-		if err != nil {
-			log.Printf("SMTP Data error: %v", err)
+	for {
+		var recipients []models.CampaignRecipient
+		if err := cs.Store.DB.Where("campaign_id = ? AND status = 'pending'", c.ID).Limit(batchSize).Find(&recipients).Error; err != nil {
+			log.Printf("DB Error fetching recipients: %v", err)
 			break
 		}
 
-		// Inject Tracking Pixel
-		baseURL := "http://localhost:9000"
-		if settings, err := cs.Store.GetSettings(); err == nil && settings.MainHostname != "" {
-			// Assuming MainHostname is just the domain (e.g. mta.example.com).
-			// We need schema. Usually if certs are installed it's https.
-			// Ideally we store a full BaseURL or derive it. For now, assume HTTPS for safety if not localhost.
-			protocol := "https"
-			if settings.MainHostname == "localhost" { protocol = "http" }
-			baseURL = fmt.Sprintf("%s://%s", protocol, settings.MainHostname)
+		if len(recipients) == 0 {
+			// No more pending recipients -> Completed
+			c.Status = "completed"
+			cs.Store.DB.Save(&c)
+			return
 		}
 
-		trackingURL := fmt.Sprintf("%s/api/track/open/%d", baseURL, r.ID)
-		pixel := fmt.Sprintf(`<img src="%s" alt="" width="1" height="1" style="display:none" />`, trackingURL)
+		for _, r := range recipients {
+			// Reconnection Logic
+			if err := client.Mail(sender.Email); err != nil {
+				log.Printf("SMTP Connection lost (%v). Reconnecting...", err)
+				client.Close()
 
-		bodyWithPixel := c.Body + "\n" + pixel
+				conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+				if err == nil {
+					client, err = smtp.NewClient(conn, "localhost")
+				}
 
-		// Body
-		msg := fmt.Sprintf("To: %s\r\n%s%s", r.Email, baseHeaders, bodyWithPixel)
+				if err != nil {
+					log.Printf("Failed to reconnect: %v. Pausing campaign.", err)
+					c.Status = "paused" // Mark paused to be resumed manually or by scheduler
+					cs.Store.DB.Save(&c)
+					return
+				}
+				// Retry MAIL command
+				if err := client.Mail(sender.Email); err != nil {
+					log.Printf("Reconnection failed: %v", err)
+					c.Status = "paused"
+					cs.Store.DB.Save(&c)
+					return
+				}
+			}
 
-		if _, err = wc.Write([]byte(msg)); err != nil {
-			log.Printf("SMTP Write error: %v", err)
-		}
-		if err = wc.Close(); err != nil {
-			log.Printf("SMTP Close error: %v", err)
-		}
+			if err := client.Rcpt(r.Email); err != nil {
+				// Recipient rejected (e.g. invalid syntax, or server block)
+				// We fail this specific recipient but continue
+				r.Status = "failed"
+				r.Error = err.Error()
+				cs.Store.DB.Save(&r)
+				client.Reset()
+				continue
+			}
 
-		r.SentAt = time.Now()
-		// Simple error check on the last operation, mostly
-		if err != nil {
-			r.Status = "failed"
-			r.Error = err.Error()
-			c.TotalFailed++
-		} else {
+			wc, err := client.Data()
+			if err != nil {
+				log.Printf("SMTP Data error: %v", err)
+				client.Reset()
+				continue
+			}
+
+			// Inject Tracking Pixel
+			trackingURL := fmt.Sprintf("%s/api/track/open/%d", baseURL, r.ID)
+			pixel := fmt.Sprintf(`<img src="%s" alt="" width="1" height="1" style="display:none" />`, trackingURL)
+			bodyWithPixel := c.Body + "\n" + pixel
+
+			msg := fmt.Sprintf("To: %s\r\n%s%s", r.Email, baseHeaders, bodyWithPixel)
+
+			if _, err = wc.Write([]byte(msg)); err != nil {
+				log.Printf("SMTP Write error: %v", err)
+			}
+			if err = wc.Close(); err != nil {
+				log.Printf("SMTP Close error: %v", err)
+			}
+
+			// Success
 			r.Status = "sent"
-			r.Error = ""
+			r.SentAt = time.Now()
+			cs.Store.DB.Save(&r)
+
 			c.TotalSent++
+			// Throttle
+			time.Sleep(10 * time.Millisecond)
 		}
 
-		// Save recipient status
-		cs.Store.DB.Save(&r)
-
-		// Update Campaign stats
+		// Update stats after batch
 		cs.Store.DB.Model(&c).Updates(map[string]interface{}{
 			"total_sent": c.TotalSent,
 			"total_failed": c.TotalFailed,
 		})
-
-		// Throttle slightly
-		time.Sleep(10 * time.Millisecond)
 	}
-
-	c.Status = "completed"
-	cs.Store.DB.Save(&c)
 }

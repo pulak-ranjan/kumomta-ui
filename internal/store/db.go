@@ -33,7 +33,11 @@ func NewStore(path string) (*Store, error) {
 		&models.EmailStats{},
 		&models.WebhookLog{},
 		&models.APIKey{},
-		&models.ChatLog{}, // NEW
+		&models.ChatLog{},
+		&models.ContactList{}, // NEW
+		&models.Contact{},     // NEW
+		&models.Campaign{},    // NEW
+		&models.CampaignRecipient{}, // NEW
 	); err != nil {
 		return nil, err
 	}
