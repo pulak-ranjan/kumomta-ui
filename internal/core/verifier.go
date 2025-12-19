@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/smtp"
 	"strings"
+	"time"
 )
 
 // EmailVerificationResult holds the outcome of a check
@@ -17,7 +18,7 @@ type EmailVerificationResult struct {
 }
 
 // VerifyEmail performs Syntax, DNS MX, and SMTP RCPT checks
-func VerifyEmail(email string, senderEmail string) EmailVerificationResult {
+func VerifyEmail(email string, senderEmail string, heloHost string) EmailVerificationResult {
 	res := EmailVerificationResult{Email: email}
 
 	// 1. Syntax Check
@@ -53,24 +54,34 @@ func VerifyEmail(email string, senderEmail string) EmailVerificationResult {
 	// If RCPT TO is accepted (250), the email likely exists.
 	// NOTE: Some servers accept everything (catch-all). Some block dynamic IPs.
 
-	client, err := smtp.Dial(fmt.Sprintf("%s:25", mxHost))
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:25", mxHost), 10*time.Second)
 	if err != nil {
-		res.IsValid = false // Maybe transient? But for now, mark invalid.
-		res.RiskScore = 50 // Could be network issue
-		res.Error = fmt.Sprintf("SMTP Connect failed: %v", err)
-		res.Log += "SMTP Connect failed."
+		res.IsValid = false
+		res.RiskScore = 50
+		res.Error = fmt.Sprintf("SMTP Connect timeout: %v", err)
+		res.Log += "SMTP Connect timeout."
+		return res
+	}
+
+	client, err := smtp.NewClient(conn, mxHost)
+	if err != nil {
+		conn.Close()
+		res.IsValid = false
+		res.RiskScore = 50
+		res.Error = fmt.Sprintf("SMTP Client failed: %v", err)
 		return res
 	}
 	defer client.Quit()
 
-	if err := client.Hello("check.kumomta.local"); err != nil {
+	if heloHost == "" { heloHost = "check.kumomta.local" }
+	if err := client.Hello(heloHost); err != nil {
 		res.Error = "HELO failed"
 		res.RiskScore = 20
 		return res
 	}
 
 	// Use a dummy sender or the provided one
-	if senderEmail == "" { senderEmail = "verifier@kumomta.local" }
+	if senderEmail == "" { senderEmail = fmt.Sprintf("verifier@%s", heloHost) }
 
 	if err := client.Mail(senderEmail); err != nil {
 		res.Error = fmt.Sprintf("MAIL FROM failed: %v", err)

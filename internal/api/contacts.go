@@ -30,7 +30,13 @@ func (h *ContactHandler) HandleVerifyEmail(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	result := core.VerifyEmail(req.Email, "verifier@kumomta.local") // TODO: Use real sender
+	// Fetch Hostname
+	hostname := "kumomta.local"
+	if s, err := h.Store.GetSettings(); err == nil && s.MainHostname != "" {
+		hostname = s.MainHostname
+	}
+
+	result := core.VerifyEmail(req.Email, "", hostname)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -46,10 +52,16 @@ func (h *ContactHandler) HandleCleanList(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Fetch Hostname
+	hostname := "kumomta.local"
+	if s, err := h.Store.GetSettings(); err == nil && s.MainHostname != "" {
+		hostname = s.MainHostname
+	}
+
 	// Run cleaning in background (simple approach)
 	go func() {
 		for _, c := range contacts {
-			res := core.VerifyEmail(c.Email, "verifier@kumomta.local")
+			res := core.VerifyEmail(c.Email, "", hostname)
 
 			c.IsValid = res.IsValid
 			c.RiskScore = res.RiskScore
