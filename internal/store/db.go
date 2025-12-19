@@ -38,6 +38,8 @@ func NewStore(path string) (*Store, error) {
 		&models.Contact{},     // NEW
 		&models.Campaign{},    // NEW
 		&models.CampaignRecipient{}, // NEW
+		&models.AutomationWorkflow{}, // NEW
+		&models.WhatsAppMessage{}, // NEW
 	); err != nil {
 		return nil, err
 	}
