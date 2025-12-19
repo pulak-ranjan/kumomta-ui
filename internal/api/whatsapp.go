@@ -56,10 +56,18 @@ func (h *WhatsAppHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) 
 		token := r.URL.Query().Get("hub.verify_token")
 		challenge := r.URL.Query().Get("hub.challenge")
 
-		if mode == "subscribe" && token == "KUMO_SECRET" { // TODO: Config
+		settings, err := h.Store.GetSettings()
+		if err != nil || settings.WhatsAppVerifyToken == "" {
+			http.Error(w, "Webhook not configured", http.StatusInternalServerError)
+			return
+		}
+
+		if mode == "subscribe" && token == settings.WhatsAppVerifyToken {
 			w.Write([]byte(challenge))
 			return
 		}
+		http.Error(w, "Verification failed", http.StatusForbidden)
+		return
 	}
 
 	// 2. Handle Incoming Status/Message

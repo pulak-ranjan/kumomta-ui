@@ -23,6 +23,14 @@ type AppSettings struct {
 
 	// List Cleaner Proxy
 	ProxyURL string `json:"proxy_url"` // SOCKS5 or HTTP proxy for fallback
+
+	// CORS
+	AllowedOrigins string `json:"allowed_origins"` // Comma-separated list of origins
+
+	// WhatsApp Configuration
+	WhatsAppPhoneNumberID string `json:"whatsapp_phone_number_id"`
+	WhatsAppAccessToken   string `json:"whatsapp_access_token"` // Should be encrypted
+	WhatsAppVerifyToken   string `json:"whatsapp_verify_token"`
 }
 
 // A domain managed by the system

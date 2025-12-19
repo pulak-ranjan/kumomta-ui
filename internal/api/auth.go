@@ -15,6 +15,7 @@ import (
 	"github.com/pulak-ranjan/kumomta-ui/internal/core"
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
+	"github.com/pulak-ranjan/kumomta-ui/internal/validation"
 )
 
 type authRequest struct {
@@ -96,13 +97,17 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !validateEmail(req.Email) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid email format"})
+	v := validation.New()
+	v.Required("email", req.Email).Email("email", req.Email)
+	v.Required("password", req.Password).MinLength("password", req.Password, 8)
+
+	if !v.Valid() {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"errors": v.Errors()})
 		return
 	}
 
 	if !validatePassword(req.Password) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters with at least 1 letter and 1 number"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must have at least 1 letter and 1 number"})
 		return
 	}
 
@@ -146,6 +151,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req authRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	v := validation.New()
+	v.Required("email", req.Email).Email("email", req.Email)
+	v.Required("password", req.Password)
+
+	if !v.Valid() {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"errors": v.Errors()})
 		return
 	}
 

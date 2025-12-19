@@ -12,6 +12,11 @@ import (
 )
 
 func main() {
+	// Check security configuration first
+	if _, err := core.GetEncryptionKey(); err != nil {
+		log.Fatalf("Security configuration error: %v. Please set KUMO_APP_SECRET environment variable.", err)
+	}
+
 	dbDir := os.Getenv("DB_DIR")
 	if dbDir == "" {
 		dbDir = "/var/lib/kumomta-ui"
