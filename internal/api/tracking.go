@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -43,12 +44,14 @@ func (h *TrackingHandler) HandleTrackClick(w http.ResponseWriter, r *http.Reques
 	id, _ := strconv.Atoi(idStr)
 	targetURL := r.URL.Query().Get("url")
 
-	if id > 0 {
-		go h.recordClick(uint(id))
+	// Security: Prevent Open Redirect to non-HTTP protocols (e.g. javascript:)
+	// TODO: Ideally verify domain against allowlist or sign the URL.
+	if targetURL == "" || (!strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://")) {
+		targetURL = "/" // Fallback
 	}
 
-	if targetURL == "" {
-		targetURL = "/" // Fallback
+	if id > 0 {
+		go h.recordClick(uint(id))
 	}
 
 	http.Redirect(w, r, targetURL, http.StatusFound)

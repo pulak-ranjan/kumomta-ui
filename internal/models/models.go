@@ -20,6 +20,9 @@ type AppSettings struct {
 	WebhookURL     string  `json:"webhook_url"`
 	WebhookEnabled bool    `json:"webhook_enabled"`
 	BounceAlertPct float64 `json:"bounce_alert_pct"`
+
+	// List Cleaner Proxy
+	ProxyURL string `json:"proxy_url"` // SOCKS5 or HTTP proxy for fallback
 }
 
 // A domain managed by the system

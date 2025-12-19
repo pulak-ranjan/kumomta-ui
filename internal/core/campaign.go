@@ -7,6 +7,8 @@ import (
 	"log"
 	"net"
 	"net/smtp"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -231,12 +233,16 @@ func (cs *CampaignService) processCampaign(c models.Campaign) {
 				continue
 			}
 
-			// Inject Tracking Pixel
-			trackingURL := fmt.Sprintf("%s/api/track/open/%d", baseURL, r.ID)
-			pixel := fmt.Sprintf(`<img src="%s" alt="" width="1" height="1" style="display:none" />`, trackingURL)
-			bodyWithPixel := c.Body + "\n" + pixel
+			// Inject Tracking Pixel & Rewrite Links
+			trackingOpenURL := fmt.Sprintf("%s/api/track/open/%d", baseURL, r.ID)
+			pixel := fmt.Sprintf(`<img src="%s" alt="" width="1" height="1" style="display:none" />`, trackingOpenURL)
 
-			msg := fmt.Sprintf("To: %s\r\n%s%s", r.Email, baseHeaders, bodyWithPixel)
+			// Rewrite Links for Click Tracking
+			bodyWithLinks := rewriteLinks(c.Body, baseURL, r.ID)
+
+			bodyFinal := bodyWithLinks + "\n" + pixel
+
+			msg := fmt.Sprintf("To: %s\r\n%s%s", r.Email, baseHeaders, bodyFinal)
 
 			if _, err = wc.Write([]byte(msg)); err != nil {
 				log.Printf("SMTP Write error: %v", err)
@@ -261,4 +267,26 @@ func (cs *CampaignService) processCampaign(c models.Campaign) {
 			"total_failed": c.TotalFailed,
 		})
 	}
+}
+
+// rewriteLinks finds all href="..." and replaces them with tracking URLs
+func rewriteLinks(html string, baseURL string, recipientID uint) string {
+	// Simple regex for href attributes
+	// Note: This is a basic implementation. A proper HTML parser would be more robust but heavier.
+	re := regexp.MustCompile(`href=["'](http[^"']+)["']`)
+
+	return re.ReplaceAllStringFunc(html, func(match string) string {
+		// Extract URL from match (e.g. href="http://google.com")
+		// We need to be careful with quotes
+		quote := match[5:6] // " or '
+		originalURL := match[6 : len(match)-1]
+
+		// Encode the original URL
+		encodedURL := url.QueryEscape(originalURL)
+
+		// Construct tracking URL
+		trackingURL := fmt.Sprintf("%s/api/track/click/%d?url=%s", baseURL, recipientID, encodedURL)
+
+		return fmt.Sprintf("href=%s%s%s", quote, trackingURL, quote)
+	})
 }
