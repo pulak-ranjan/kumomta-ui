@@ -32,11 +32,18 @@ func (h *ContactHandler) HandleVerifyEmail(w http.ResponseWriter, r *http.Reques
 
 	// Fetch Hostname
 	hostname := "kumomta.local"
-	if s, err := h.Store.GetSettings(); err == nil && s.MainHostname != "" {
-		hostname = s.MainHostname
+	var proxyURL string
+	if s, err := h.Store.GetSettings(); err == nil {
+		if s.MainHostname != "" { hostname = s.MainHostname }
+		proxyURL = s.ProxyURL
 	}
 
-	result := core.VerifyEmail(req.Email, "", hostname)
+	opts := core.VerifierOptions{
+		HeloHost: hostname,
+		ProxyURL: proxyURL,
+	}
+
+	result := core.VerifyEmail(req.Email, opts)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -54,14 +61,21 @@ func (h *ContactHandler) HandleCleanList(w http.ResponseWriter, r *http.Request)
 
 	// Fetch Hostname
 	hostname := "kumomta.local"
-	if s, err := h.Store.GetSettings(); err == nil && s.MainHostname != "" {
-		hostname = s.MainHostname
+	var proxyURL string
+	if s, err := h.Store.GetSettings(); err == nil {
+		if s.MainHostname != "" { hostname = s.MainHostname }
+		proxyURL = s.ProxyURL
+	}
+
+	opts := core.VerifierOptions{
+		HeloHost: hostname,
+		ProxyURL: proxyURL,
 	}
 
 	// Run cleaning in background (simple approach)
 	go func() {
 		for _, c := range contacts {
-			res := core.VerifyEmail(c.Email, "", hostname)
+			res := core.VerifyEmail(c.Email, opts)
 
 			c.IsValid = res.IsValid
 			c.RiskScore = res.RiskScore
