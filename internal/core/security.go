@@ -68,6 +68,59 @@ func BackupConfig() error {
 	return pruneBackups()
 }
 
+// EnsureRecentBackup creates a backup only if the latest one is older than 24h
+// This is safe to call on startup.
+func EnsureRecentBackup() error {
+	entries, err := os.ReadDir(BackupDir)
+	if err != nil {
+		// If dir doesn't exist, we should probably backup
+		if os.IsNotExist(err) {
+			return BackupConfig()
+		}
+		return err
+	}
+
+	var backups []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), "config-backup-") {
+			backups = append(backups, filepath.Join(BackupDir, e.Name()))
+		}
+	}
+
+	// No backups? Create one.
+	if len(backups) == 0 {
+		return BackupConfig()
+	}
+
+	// Find the newest backup (by timestamp in filename)
+	// Filename format: config-backup-20060102-150405.tar.gz
+	// Since format is sortable string, the last one is the newest.
+	sort.Strings(backups)
+	newestPath := backups[len(backups)-1]
+	newestName := filepath.Base(newestPath)
+
+	// Extract timestamp
+	// "config-backup-" is 14 chars
+	// "20060102-150405" is 15 chars
+	if len(newestName) < 29 {
+		// weird filename, just backup to be safe
+		return BackupConfig()
+	}
+	tsStr := newestName[14:29]
+	ts, err := time.Parse("20060102-150405", tsStr)
+	if err != nil {
+		return BackupConfig()
+	}
+
+	// Check if > 24 hours old
+	if time.Since(ts) > 24*time.Hour {
+		return BackupConfig()
+	}
+
+	// Recent backup exists
+	return nil
+}
+
 func pruneBackups() error {
 	entries, err := os.ReadDir(BackupDir)
 	if err != nil {

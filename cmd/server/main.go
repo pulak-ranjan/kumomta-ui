@@ -47,17 +47,37 @@ func main() {
 func startScheduler(ws *core.WebhookService) {
 	log.Println("Starting background scheduler...")
 
-	// Run warmup check immediately on startup to catch up
+	// Run startup checks immediately (non-blocking)
 	go func() {
-		log.Println("[Scheduler] Running initial warmup check...")
+		log.Println("[Scheduler] Running initial startup checks...")
+
+		// 1. Warmup (catch up on missing cycles)
 		if err := core.ProcessDailyWarmup(ws.Store); err != nil {
-			log.Printf("Warmup error: %v", err)
+			log.Printf("Warmup startup check error: %v", err)
+		}
+
+		// 2. Campaigns (Resume interrupted jobs)
+		cs := core.NewCampaignService(ws.Store)
+		if err := cs.ResumeInterruptedCampaigns(); err != nil {
+			log.Printf("Campaign resumption error: %v", err)
+		}
+
+		// 3. Security & Compliance
+		ws.RunSecurityAudit()
+		ws.CheckBlacklists(false) // Silent unless issues found
+
+		// 4. Stats & Alerts
+		ws.CheckBounceRates()
+
+		// 5. Backup (if missing/stale)
+		if err := core.EnsureRecentBackup(); err != nil {
+			log.Printf("Backup startup check error: %v", err)
 		}
 	}()
 
 	dailyTicker := time.NewTicker(24 * time.Hour)
 	hourlyTicker := time.NewTicker(1 * time.Hour)
-	warmupTicker := time.NewTicker(30 * time.Minute) // Check every 30 mins
+	warmupTicker := time.NewTicker(5 * time.Minute) // Check every 5 mins
 
 	for {
 		select {
