@@ -77,7 +77,7 @@ func (h *ContactHandler) HandleCleanList(w http.ResponseWriter, r *http.Request)
 		for _, c := range contacts {
 			res := core.VerifyEmail(c.Email, opts)
 
-			c.IsValid = res.IsValid
+			c.IsValid = (res.IsReachable == "safe")
 			c.RiskScore = res.RiskScore
 			c.VerifyLog = res.Log
 

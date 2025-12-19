@@ -285,7 +285,9 @@ func rewriteLinks(html string, baseURL string, recipientID uint) string {
 		encodedURL := url.QueryEscape(originalURL)
 
 		// Construct tracking URL
-		trackingURL := fmt.Sprintf("%s/api/track/click/%d?url=%s", baseURL, recipientID, encodedURL)
+		// We sign the original URL to prevent tampering/open redirects
+		signature := SignLink(originalURL)
+		trackingURL := fmt.Sprintf("%s/api/track/click/%d?url=%s&sig=%s", baseURL, recipientID, encodedURL, signature)
 
 		return fmt.Sprintf("href=%s%s%s", quote, trackingURL, quote)
 	})

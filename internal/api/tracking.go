@@ -4,10 +4,10 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/pulak-ranjan/kumomta-ui/internal/core"
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
@@ -43,11 +43,13 @@ func (h *TrackingHandler) HandleTrackClick(w http.ResponseWriter, r *http.Reques
 	idStr := chi.URLParam(r, "id")
 	id, _ := strconv.Atoi(idStr)
 	targetURL := r.URL.Query().Get("url")
+	signature := r.URL.Query().Get("sig")
 
-	// Security: Prevent Open Redirect to non-HTTP protocols (e.g. javascript:)
-	// TODO: Ideally verify domain against allowlist or sign the URL.
-	if targetURL == "" || (!strings.HasPrefix(targetURL, "http://") && !strings.HasPrefix(targetURL, "https://")) {
-		targetURL = "/" // Fallback
+	// Security: Prevent Open Redirect using HMAC
+	// We verify that the 'url' param was signed by our system.
+	if targetURL == "" || !core.VerifyLinkSignature(targetURL, signature) {
+		http.Error(w, "Invalid link signature", http.StatusForbidden)
+		return
 	}
 
 	if id > 0 {

@@ -11,14 +11,53 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// EmailVerificationResult holds the outcome of a check
+// Reacher-compatible Result Structure
 type EmailVerificationResult struct {
-	Email      string `json:"email"`
-	IsValid    bool   `json:"is_valid"`
-	IsCatchAll bool   `json:"is_catch_all"`
-	Error      string `json:"error,omitempty"`
-	RiskScore  int    `json:"risk_score"` // 0 = safe, 100 = invalid/risky
-	Log        string `json:"log"`
+	Input       string `json:"input"`
+	IsReachable string `json:"is_reachable"` // "safe", "risky", "invalid", "unknown"
+
+	Misc   MiscDetails   `json:"misc"`
+	MX     MXDetails     `json:"mx"`
+	SMTP   SMTPDetails   `json:"smtp"`
+	Syntax SyntaxDetails `json:"syntax"`
+
+	Error     string `json:"error,omitempty"`
+	RiskScore int    `json:"risk_score"`
+	Log       string `json:"log"`
+}
+
+type MiscDetails struct {
+	IsDisposable   bool `json:"is_disposable"`
+	IsRoleAccount  bool `json:"is_role_account"`
+}
+
+type MXDetails struct {
+	AcceptsMail bool     `json:"accepts_mail"`
+	Records     []string `json:"records"`
+}
+
+type SMTPDetails struct {
+	CanConnect    bool `json:"can_connect_smtp"`
+	IsCatchAll    bool `json:"is_catch_all"`
+	IsDeliverable bool `json:"is_deliverable"`
+}
+
+type SyntaxDetails struct {
+	Domain        string `json:"domain"`
+	Username      string `json:"username"`
+	IsValidSyntax bool   `json:"is_valid_syntax"`
+}
+
+// Common disposable domains (truncated list for MVP)
+var disposableDomains = map[string]bool{
+	"mailinator.com": true, "yopmail.com": true, "guerrillamail.com": true,
+	"temp-mail.org": true, "10minutemail.com": true, "sharklasers.com": true,
+}
+
+// Common role accounts
+var roleAccounts = map[string]bool{
+	"admin": true, "support": true, "info": true, "sales": true, "contact": true,
+	"webmaster": true, "postmaster": true, "hostmaster": true, "abuse": true,
 }
 
 // VerifierOptions configures the check
@@ -31,39 +70,44 @@ type VerifierOptions struct {
 
 // VerifyEmail performs robust checks with Multi-IP and Proxy fallback
 func VerifyEmail(email string, opts VerifierOptions) EmailVerificationResult {
-	res := EmailVerificationResult{Email: email}
+	res := EmailVerificationResult{Input: email}
 
 	// 1. Syntax Check
-	if !strings.Contains(email, "@") || !strings.Contains(email, ".") {
-		res.IsValid = false
-		res.RiskScore = 100
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 || !strings.Contains(parts[1], ".") {
+		res.IsReachable = "invalid"
+		res.Syntax.IsValidSyntax = false
 		res.Error = "Invalid syntax"
-		res.Log = "Syntax check failed"
+		return res
+	}
+	res.Syntax.IsValidSyntax = true
+	res.Syntax.Username = parts[0]
+	res.Syntax.Domain = parts[1]
+
+	// Misc Checks
+	res.Misc.IsDisposable = disposableDomains[parts[1]]
+	res.Misc.IsRoleAccount = roleAccounts[parts[0]]
+
+	// 2. MX Record Lookup
+	mxs, err := net.LookupMX(res.Syntax.Domain)
+	if err != nil || len(mxs) == 0 {
+		res.IsReachable = "invalid"
+		res.MX.AcceptsMail = false
+		res.Error = "No MX records found"
 		return res
 	}
 
-	parts := strings.Split(email, "@")
-	domain := parts[1]
-
-	// 2. MX Record Lookup
-	mxs, err := net.LookupMX(domain)
-	if err != nil || len(mxs) == 0 {
-		res.IsValid = false
-		res.RiskScore = 90
-		res.Error = "No MX records found"
-		res.Log = fmt.Sprintf("MX lookup failed for %s", domain)
-		return res
+	res.MX.AcceptsMail = true
+	for _, mx := range mxs {
+		res.MX.Records = append(res.MX.Records, mx.Host)
 	}
 
 	mxHost := mxs[0].Host
 	mxHost = strings.TrimSuffix(mxHost, ".") // Ensure no trailing dot
-	res.Log = fmt.Sprintf("MX found: %s. ", mxHost)
 
 	// 3. SMTP Handshake with Multi-IP Rotation
 
 	// Prepare list of Dialers (Source IPs + Default + Proxy)
-	// Strategy: Try IPs first. If connection fails/blocked, try Proxy.
-
 	dialers := make([]func(network, addr string) (net.Conn, error), 0)
 
 	// A. Add Source IPs
@@ -77,7 +121,7 @@ func VerifyEmail(email string, opts VerifierOptions) EmailVerificationResult {
 		})
 	}
 
-	// B. Add Default Interface (if no source IPs or just as backup)
+	// B. Add Default Interface
 	if len(dialers) == 0 {
 		dialers = append(dialers, func(network, addr string) (net.Conn, error) {
 			return net.DialTimeout(network, addr, 10*time.Second)
@@ -95,45 +139,44 @@ func VerifyEmail(email string, opts VerifierOptions) EmailVerificationResult {
 		})
 	}
 
-	// Try each dialer until one gives a definitive answer (or all fail)
+	// Try each dialer
 	for i, dial := range dialers {
 		res.Log += fmt.Sprintf("[Attempt %d] ", i+1)
 
 		result := performSMTPCheck(dial, mxHost, email, opts)
 
+		// Fill SMTP details
+		res.SMTP.CanConnect = (result.Error == "" || strings.Contains(result.Error, "550") || strings.Contains(result.Error, "RCPT"))
+		res.SMTP.IsCatchAll = result.IsCatchAll
+
 		if result.Error == "" {
-			// Success! Server accepted RCPT TO
-			res.IsValid = true
-			res.IsCatchAll = result.IsCatchAll
-			res.RiskScore = 0
+			// Success
 			if result.IsCatchAll {
-				res.RiskScore = 50 // Catch-all means we can't be sure
-				res.Log += "Catch-All Detected (Unknown)."
+				res.IsReachable = "risky" // Catch-all is always risky/unknown
+				res.SMTP.IsDeliverable = true // Technically yes, but...
+				res.RiskScore = 50
 			} else {
-				res.Log += "Success."
+				res.IsReachable = "safe"
+				res.SMTP.IsDeliverable = true
+				res.RiskScore = 0
 			}
-			res.Error = ""
 			return res
 		}
 
 		// Analyze Error
-		// If 550 User Unknown -> Stop, we know it doesn't exist.
-		// If Timeout/Connect Fail -> Continue to next IP/Proxy.
 		if strings.Contains(result.Error, "550") || strings.Contains(result.Error, "User unknown") {
-			res.IsValid = false
-			res.IsCatchAll = result.IsCatchAll
+			res.IsReachable = "invalid"
+			res.SMTP.IsDeliverable = false
 			res.RiskScore = 100
-			res.Error = result.Error
-			res.Log += "Rejected (550)."
 			return res
 		}
 
 		res.Log += fmt.Sprintf("Failed (%s). Retrying... ", result.Error)
 	}
 
-	// If all attempts failed (timeouts/blocks)
-	res.IsValid = false
-	res.RiskScore = 50 // Unknown/Grey
+	// If all attempts failed
+	res.IsReachable = "unknown"
+	res.RiskScore = 50
 	res.Error = "All connection attempts failed"
 	return res
 }
