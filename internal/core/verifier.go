@@ -13,11 +13,12 @@ import (
 
 // EmailVerificationResult holds the outcome of a check
 type EmailVerificationResult struct {
-	Email     string `json:"email"`
-	IsValid   bool   `json:"is_valid"`
-	Error     string `json:"error,omitempty"`
-	RiskScore int    `json:"risk_score"` // 0 = safe, 100 = invalid/risky
-	Log       string `json:"log"`
+	Email      string `json:"email"`
+	IsValid    bool   `json:"is_valid"`
+	IsCatchAll bool   `json:"is_catch_all"`
+	Error      string `json:"error,omitempty"`
+	RiskScore  int    `json:"risk_score"` // 0 = safe, 100 = invalid/risky
+	Log        string `json:"log"`
 }
 
 // VerifierOptions configures the check
@@ -98,13 +99,19 @@ func VerifyEmail(email string, opts VerifierOptions) EmailVerificationResult {
 	for i, dial := range dialers {
 		res.Log += fmt.Sprintf("[Attempt %d] ", i+1)
 
-		_, _, errStr := performSMTPCheck(dial, mxHost, email, opts)
+		result := performSMTPCheck(dial, mxHost, email, opts)
 
-		if errStr == "" {
+		if result.Error == "" {
 			// Success! Server accepted RCPT TO
 			res.IsValid = true
+			res.IsCatchAll = result.IsCatchAll
 			res.RiskScore = 0
-			res.Log += "Success."
+			if result.IsCatchAll {
+				res.RiskScore = 50 // Catch-all means we can't be sure
+				res.Log += "Catch-All Detected (Unknown)."
+			} else {
+				res.Log += "Success."
+			}
 			res.Error = ""
 			return res
 		}
@@ -112,15 +119,16 @@ func VerifyEmail(email string, opts VerifierOptions) EmailVerificationResult {
 		// Analyze Error
 		// If 550 User Unknown -> Stop, we know it doesn't exist.
 		// If Timeout/Connect Fail -> Continue to next IP/Proxy.
-		if strings.Contains(errStr, "550") || strings.Contains(errStr, "User unknown") {
+		if strings.Contains(result.Error, "550") || strings.Contains(result.Error, "User unknown") {
 			res.IsValid = false
+			res.IsCatchAll = result.IsCatchAll
 			res.RiskScore = 100
-			res.Error = errStr
+			res.Error = result.Error
 			res.Log += "Rejected (550)."
 			return res
 		}
 
-		res.Log += fmt.Sprintf("Failed (%s). Retrying... ", errStr)
+		res.Log += fmt.Sprintf("Failed (%s). Retrying... ", result.Error)
 	}
 
 	// If all attempts failed (timeouts/blocks)
@@ -130,16 +138,20 @@ func VerifyEmail(email string, opts VerifierOptions) EmailVerificationResult {
 	return res
 }
 
-func performSMTPCheck(dial func(network, addr string) (net.Conn, error), host, email string, opts VerifierOptions) (bool, int, string) {
+type smtpCheckResult struct {
+	IsCatchAll bool
+	Error      string
+}
+
+func performSMTPCheck(dial func(network, addr string) (net.Conn, error), host, email string, opts VerifierOptions) smtpCheckResult {
 	conn, err := dial("tcp", fmt.Sprintf("%s:25", host))
 	if err != nil {
-		return false, 50, fmt.Sprintf("Connect error: %v", err)
+		return smtpCheckResult{Error: fmt.Sprintf("Connect error: %v", err)}
 	}
-	// We handle the client manually to ensure we close it
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		conn.Close()
-		return false, 50, fmt.Sprintf("Client error: %v", err)
+		return smtpCheckResult{Error: fmt.Sprintf("Client error: %v", err)}
 	}
 	defer client.Quit()
 
@@ -147,19 +159,38 @@ func performSMTPCheck(dial func(network, addr string) (net.Conn, error), host, e
 	if helo == "" { helo = "check.kumomta.local" }
 
 	if err := client.Hello(helo); err != nil {
-		return false, 20, fmt.Sprintf("HELO error: %v", err)
+		return smtpCheckResult{Error: fmt.Sprintf("HELO error: %v", err)}
 	}
 
 	sender := opts.SenderEmail
 	if sender == "" { sender = fmt.Sprintf("verifier@%s", helo) }
 
 	if err := client.Mail(sender); err != nil {
-		return false, 30, fmt.Sprintf("MAIL FROM error: %v", err)
+		return smtpCheckResult{Error: fmt.Sprintf("MAIL FROM error: %v", err)}
 	}
 
+	// 1. Catch-All Check (Reacher Backend Logic)
+	// Try a random invalid email to see if server accepts everything
+	randomLocal := fmt.Sprintf("random-%d", time.Now().UnixNano())
+	domain := strings.Split(email, "@")[1]
+	randomEmail := fmt.Sprintf("%s@%s", randomLocal, domain)
+
+	// We ignore error here because we just want to know 250 vs 550
+	err = client.Rcpt(randomEmail)
+	if err == nil {
+		// Server ACCEPTED a garbage email -> Catch-All detected
+		// We stop here because verifying the real email provides no info
+		return smtpCheckResult{IsCatchAll: true, Error: ""}
+	}
+
+	// If rejected (550), it's NOT a catch-all, so we can trust the next check.
+	// Reset state? No, RCPT can be called multiple times in one session usually.
+	// But some servers might be picky. Let's try proceeding.
+
+	// 2. Real Email Check
 	if err := client.Rcpt(email); err != nil {
-		return false, 100, fmt.Sprintf("RCPT TO error: %v", err)
+		return smtpCheckResult{Error: fmt.Sprintf("RCPT TO error: %v", err)}
 	}
 
-	return true, 0, ""
+	return smtpCheckResult{IsCatchAll: false, Error: ""}
 }
