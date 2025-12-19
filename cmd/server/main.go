@@ -79,12 +79,20 @@ func startScheduler(ws *core.WebhookService) {
 	hourlyTicker := time.NewTicker(1 * time.Hour)
 	warmupTicker := time.NewTicker(5 * time.Minute) // Check every 5 mins
 
+	// Initialize campaign service for scheduler usage
+	cs := core.NewCampaignService(ws.Store)
+
 	for {
 		select {
 		case <-warmupTicker.C:
-			// Run frequent checks for warmup progression
+			// 1. Warmup Progression
 			if err := core.ProcessDailyWarmup(ws.Store); err != nil {
 				log.Printf("Warmup error: %v", err)
+			}
+
+			// 2. Check Scheduled Campaigns (every 5 mins)
+			if err := cs.StartScheduledCampaigns(); err != nil {
+				log.Printf("Scheduled campaign error: %v", err)
 			}
 
 		case <-dailyTicker.C:

@@ -106,6 +106,34 @@ func (cs *CampaignService) ResumeInterruptedCampaigns() error {
 	return nil
 }
 
+// StartScheduledCampaigns finds campaigns ready to send and launches them
+func (cs *CampaignService) StartScheduledCampaigns() error {
+	var campaigns []models.Campaign
+	now := time.Now()
+
+	if err := cs.Store.DB.Where("status = 'scheduled' AND scheduled_at <= ?", now).Find(&campaigns).Error; err != nil {
+		return err
+	}
+
+	for _, c := range campaigns {
+		// Atomic update to prevent double-send race conditions
+		result := cs.Store.DB.Model(&c).Where("status = 'scheduled'").Update("status", "sending")
+		if result.RowsAffected == 0 {
+			continue // Already picked up by another worker?
+		}
+
+		// Reload full object with preload
+		if err := cs.Store.DB.Preload("Sender").Preload("Sender.Domain").First(&c, c.ID).Error; err != nil {
+			log.Printf("Failed to load scheduled campaign %d: %v", c.ID, err)
+			continue
+		}
+
+		log.Printf("Starting scheduled campaign %d: %s", c.ID, c.Name)
+		go cs.processCampaign(c)
+	}
+	return nil
+}
+
 func (cs *CampaignService) processCampaign(c models.Campaign) {
 	var recipients []models.CampaignRecipient
 	// Fetch pending recipients
