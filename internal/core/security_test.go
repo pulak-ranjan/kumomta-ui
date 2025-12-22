@@ -6,7 +6,10 @@ import (
 )
 
 func TestEncryptDecrypt(t *testing.T) {
-	// 1. Test with default key (no env var)
+	// Set required environment variable
+	os.Setenv("KUMO_APP_SECRET", "custom-super-secret-key-that-is-very-long-32b")
+	defer os.Unsetenv("KUMO_APP_SECRET")
+
 	original := "my-secret-api-key-123"
 
 	encrypted, err := Encrypt(original)
@@ -27,26 +30,11 @@ func TestEncryptDecrypt(t *testing.T) {
 		t.Errorf("Expected %s, got %s", original, decrypted)
 	}
 
-	// 2. Test with custom key (env var)
-	os.Setenv("KUMO_APP_SECRET", "custom-super-secret-key-that-is-very-long-32b")
-	defer os.Unsetenv("KUMO_APP_SECRET")
-
-	encrypted2, err := Encrypt(original)
-	if err != nil {
-		t.Fatalf("Encrypt with custom key failed: %v", err)
-	}
-
-	if encrypted2 == encrypted {
-		t.Fatal("Encryption should differ with different keys (and nonces)")
-	}
-
-	decrypted2, err := Decrypt(encrypted2)
-	if err != nil {
-		t.Fatalf("Decrypt with custom key failed: %v", err)
-	}
-
-	if decrypted2 != original {
-		t.Errorf("Expected %s, got %s", original, decrypted2)
+	// Test that it fails without key
+	os.Unsetenv("KUMO_APP_SECRET")
+	_, err = Encrypt(original)
+	if err == nil {
+		t.Fatal("Encrypt should fail without env var")
 	}
 }
 
@@ -61,6 +49,10 @@ func TestEncryptEmpty(t *testing.T) {
 }
 
 func TestBackwardCompatibility(t *testing.T) {
+	// Set required environment variable
+	os.Setenv("KUMO_APP_SECRET", "custom-super-secret-key-that-is-very-long-32b")
+	defer os.Unsetenv("KUMO_APP_SECRET")
+
 	// Plaintext that is not valid base64
 	plaintext1 := "my-plaintext-key"
 	dec1, err := Decrypt(plaintext1)

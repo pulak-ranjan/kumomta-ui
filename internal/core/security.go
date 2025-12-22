@@ -156,31 +156,26 @@ var (
 	keyOnce sync.Once
 )
 
-// Encryption Key Management
-func getEncryptionKey() []byte {
+// GetEncryptionKey validates and returns the encryption key
+func GetEncryptionKey() ([]byte, error) {
 	secret := os.Getenv("KUMO_APP_SECRET")
 	if secret == "" {
-		keyOnce.Do(func() {
-			fmt.Println("WARNING: KUMO_APP_SECRET not set. Using insecure default key for encryption.")
-		})
-		// Fallback for development/quickstart
-		// In production, this should be set!
-		secret = "kumo-default-insecure-secret-key-32b"
+		return nil, fmt.Errorf("KUMO_APP_SECRET environment variable is required but not set")
 	}
-	// Pad or truncate to 32 bytes for AES-256
-	b := []byte(secret)
-	if len(b) < 32 {
-		pad := make([]byte, 32-len(b))
-		b = append(b, pad...)
+	if len(secret) < 32 {
+		return nil, fmt.Errorf("KUMO_APP_SECRET must be at least 32 characters")
 	}
-	return b[:32]
+	return []byte(secret[:32]), nil
 }
 
 func Encrypt(plaintext string) (string, error) {
 	if plaintext == "" {
 		return "", nil
 	}
-	key := getEncryptionKey()
+	key, err := GetEncryptionKey()
+	if err != nil {
+		return "", fmt.Errorf("encryption unavailable: %w", err)
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
@@ -212,7 +207,11 @@ func Decrypt(ciphertext string) (string, error) {
 		return ciphertext, nil
 	}
 
-	key := getEncryptionKey()
+	key, err := GetEncryptionKey()
+	if err != nil {
+		// Cannot decrypt without key
+		return "", err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
@@ -242,7 +241,11 @@ func Decrypt(ciphertext string) (string, error) {
 
 // HMAC Signing for Click Tracking
 func SignLink(url string) string {
-	key := getEncryptionKey()
+	key, err := GetEncryptionKey()
+	if err != nil {
+		// Should have checked at startup, but fail safe
+		return ""
+	}
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(url))
 	return hex.EncodeToString(mac.Sum(nil))
@@ -250,5 +253,8 @@ func SignLink(url string) string {
 
 func VerifyLinkSignature(url, signature string) bool {
 	expected := SignLink(url)
+	if expected == "" {
+		return false
+	}
 	return hmac.Equal([]byte(expected), []byte(signature))
 }

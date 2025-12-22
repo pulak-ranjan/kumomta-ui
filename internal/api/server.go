@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/pulak-ranjan/kumomta-ui/internal/core"
+	"github.com/pulak-ranjan/kumomta-ui/internal/middleware/custom"
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
 )
@@ -35,10 +36,34 @@ func (s *Server) routes() chi.Router {
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	
+	r.Use(custom.GeneralLimiter.Limit)
+
 	// Dynamic CORS for Credentials support
 	r.Use(cors.Handler(cors.Options{
-		AllowOriginFunc:  func(r *http.Request, origin string) bool { return true },
+		AllowOriginFunc: func(r *http.Request, origin string) bool {
+			// In development, allow localhost
+			if strings.HasPrefix(origin, "http://localhost") || strings.HasPrefix(origin, "http://127.0.0.1") {
+				return true
+			}
+
+			settings, err := s.Store.GetSettings()
+			if err != nil {
+				return false
+			}
+
+			// If no origins configured, default to denying external access (safe default)
+			if settings.AllowedOrigins == "" {
+				return false
+			}
+
+			allowed := strings.Split(settings.AllowedOrigins, ",")
+			for _, a := range allowed {
+				if strings.TrimSpace(a) == origin {
+					return true
+				}
+			}
+			return false
+		},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Temp-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -47,9 +72,9 @@ func (s *Server) routes() chi.Router {
 	}))
 
 	// --- Public Routes ---
-	r.Post("/api/auth/register", s.handleRegister)
-	r.Post("/api/auth/login", s.handleLogin)
-	r.Post("/api/auth/verify-2fa", s.handleVerify2FA)
+	r.With(custom.AuthLimiter.Limit).Post("/api/auth/register", s.handleRegister)
+	r.With(custom.AuthLimiter.Limit).Post("/api/auth/login", s.handleLogin)
+	r.With(custom.AuthLimiter.Limit).Post("/api/auth/verify-2fa", s.handleVerify2FA)
 
 	// --- Protected Routes ---
 	r.Group(func(r chi.Router) {
@@ -187,7 +212,7 @@ func (s *Server) routes() chi.Router {
 		r.Get("/api/analytics/campaign-summary", analytics.GetCampaignSummary)
 
 		contacts := NewContactHandler(s.Store)
-		r.Post("/api/contacts/verify", contacts.HandleVerifyEmail)
+		r.With(custom.VerifyLimiter.Limit).Post("/api/contacts/verify", contacts.HandleVerifyEmail)
 		r.Post("/api/lists/{id}/clean", contacts.HandleCleanList)
 
 		// Automation & WhatsApp

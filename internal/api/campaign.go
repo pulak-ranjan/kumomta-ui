@@ -10,6 +10,7 @@ import (
 	"github.com/pulak-ranjan/kumomta-ui/internal/core"
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 	"github.com/pulak-ranjan/kumomta-ui/internal/store"
+	"github.com/pulak-ranjan/kumomta-ui/internal/validation"
 )
 
 type CampaignHandler struct {
@@ -52,6 +53,27 @@ func (h *CampaignHandler) createCampaign(w http.ResponseWriter, r *http.Request)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	v := validation.New()
+	v.Required("name", req.Name).MaxLength("name", req.Name, 200)
+	v.Required("subject", req.Subject).MaxLength("subject", req.Subject, 500).NoScriptTags("subject", req.Subject)
+	v.Required("body", req.Body).NoScriptTags("body", req.Body)
+
+	if req.SenderID == 0 {
+		v.AddError("sender_id", "is required")
+	}
+
+	if !v.Valid() {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"errors": v.Errors()})
+		return
+	}
+
+	// Verify sender exists
+	var sender models.Sender
+	if err := h.Store.DB.First(&sender, req.SenderID).Error; err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sender not found"})
 		return
 	}
 
