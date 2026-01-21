@@ -62,10 +62,21 @@ export function getSystemIPs() {
 }
 
 export function addSystemIPs(cidr, list) {
-  return apiRequest("/system/ips", {
-    method: "POST",
-    body: { cidr, list }
-  });
+  // Fix: Route to specific endpoints based on input type
+  if (cidr && cidr.trim() !== "") {
+    return apiRequest("/system/ips/cidr", {
+      method: "POST",
+      body: { cidr }
+    });
+  } else if (list && list.trim() !== "") {
+    // Convert newline-separated string to array
+    const ipArray = list.split("\n").map(s => s.trim()).filter(s => s !== "");
+    return apiRequest("/system/ips/bulk", {
+      method: "POST",
+      body: { ips: ipArray }
+    });
+  }
+  return Promise.reject(new Error("Please provide a CIDR range or a list of IPs."));
 }
 
 // NEW: Configure IP on Server (Needed for IPsPage)
@@ -86,9 +97,9 @@ export function getDashboardStats() {
 }
 
 export function getAIInsights() {
-  return apiRequest("/system/ai-analyze", { 
-    method: "POST", 
-    body: { type: "logs" } 
+  return apiRequest("/system/ai-analyze", {
+    method: "POST",
+    body: { type: "logs" }
   });
 }
 
