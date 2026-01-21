@@ -97,7 +97,8 @@ fi
 # --------------------------
 echo "[*] Installing base dependencies..."
 dnf install -y epel-release
-dnf install -y git golang firewalld dnf-plugins-core policycoreutils-python-utils curl bind-utils swaks nano
+# Added openssl to the list of dependencies
+dnf install -y git golang firewalld dnf-plugins-core policycoreutils-python-utils curl bind-utils swaks nano openssl
 
 # Make sure firewalld is running
 systemctl enable --now firewalld || true
@@ -240,6 +241,11 @@ else
   LISTEN_ADDR="0.0.0.0:9000"
 fi
 
+# --- NEW: Generate Encryption Key ---
+echo "[*] Generating Kumo App Secret..."
+KUMO_APP_SECRET=$(openssl rand -base64 32)
+# ------------------------------------
+
 # echo "[*] Configuring systemd service..."
 cat >"$SERVICE_FILE" <<EOF
 [Unit]
@@ -252,6 +258,7 @@ Group=root
 WorkingDirectory=$PANEL_DIR
 Environment=DB_DIR=$DB_DIR
 Environment=LISTEN_ADDR=$LISTEN_ADDR
+Environment=KUMO_APP_SECRET=$KUMO_APP_SECRET
 ExecStart=$BIN_PATH
 Restart=always
 RestartSec=5
@@ -339,6 +346,7 @@ echo "Status Checks:"
 echo "  [x] Dovecot username format fixed (%u)"
 echo "  [x] Firewall ports opened (SMTP, IMAP, POP3)"
 echo "  [x] Panel Port 9000 secured (Localhost only)"
+echo "  [x] Application Secret Generated and Applied"
 echo
 
 if [ -n "$PANEL_DOMAIN" ]; then
