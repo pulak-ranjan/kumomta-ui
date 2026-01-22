@@ -173,6 +173,8 @@ func GenerateInitLua(snap *Snapshot) string {
 	mainHostname := "localhost"
 	relayIPs := []string{"127.0.0.1"}
 	listenAddr := "127.0.0.1:25"
+	tlsCertPath := "/etc/ssl/certs/mail.crt"
+	tlsKeyPath := "/etc/ssl/private/mail.key"
 
 	if snap.Settings != nil {
 		if snap.Settings.MainHostname != "" {
@@ -180,6 +182,12 @@ func GenerateInitLua(snap *Snapshot) string {
 		}
 		if snap.Settings.SMTPListenAddr != "" {
 			listenAddr = snap.Settings.SMTPListenAddr
+		}
+		if snap.Settings.TLSCertPath != "" {
+			tlsCertPath = snap.Settings.TLSCertPath
+		}
+		if snap.Settings.TLSKeyPath != "" {
+			tlsKeyPath = snap.Settings.TLSKeyPath
 		}
 		if snap.Settings.MailWizzIP != "" {
 			parts := strings.Split(snap.Settings.MailWizzIP, ",")
@@ -198,6 +206,10 @@ func GenerateInitLua(snap *Snapshot) string {
 		relayList = append(relayList, fmt.Sprintf("'%s'", ip))
 	}
 	relayListStr := strings.Join(relayList, ", ")
+
+	// Check if TLS certs exist (for conditional TLS in Lua)
+	hasTLS := tlsCertPath != "" && tlsKeyPath != ""
+	_ = hasTLS // Used in template below
 
 	var b strings.Builder
 
@@ -241,7 +253,30 @@ kumo.on('init', function()
     header_name = 'X-RefID',      -- Rename header to hide "Kumo"
   }
 
-  -- SMTP Listeners
+  -- TLS Configuration (optional - gracefully degrades if certs missing)
+  local tls_options = nil
+  local cert_path = '`)
+	b.WriteString(tlsCertPath)
+	b.WriteString(`'
+  local key_path = '`)
+	b.WriteString(tlsKeyPath)
+	b.WriteString(`'
+
+  -- Check if certificate files exist
+  local function file_exists(path)
+    local f = io.open(path, "r")
+    if f then f:close() return true end
+    return false
+  end
+
+  if file_exists(cert_path) and file_exists(key_path) then
+    tls_options = {
+      certificate = cert_path,
+      private_key = key_path,
+    }
+  end
+
+  -- Port 25: Main SMTP listener (for relay hosts, no auth required from trusted IPs)
   kumo.start_esmtp_listener {
     listen = '`)
 	b.WriteString(listenAddr)
@@ -251,13 +286,16 @@ kumo.on('init', function()
 	b.WriteString(`',
     banner = '220 ' .. '`)
 	b.WriteString(mainHostname)
-	b.WriteString(`', -- Minimal banner
+	b.WriteString(`',
     relay_hosts = { `)
 	b.WriteString(relayListStr)
 	b.WriteString(` },
     trace_headers = trace_settings,
+    tls_certificate = tls_options and tls_options.certificate or nil,
+    tls_private_key = tls_options and tls_options.private_key or nil,
   }
 
+  -- Port 587: Submission port (STARTTLS + AUTH)
   kumo.start_esmtp_listener {
     listen = '0.0.0.0:587',
     hostname = '`)
@@ -265,26 +303,34 @@ kumo.on('init', function()
 	b.WriteString(`',
     banner = '220 ' .. '`)
 	b.WriteString(mainHostname)
-	b.WriteString(`', 
+	b.WriteString(`',
     relay_hosts = { `)
 	b.WriteString(relayListStr)
 	b.WriteString(` },
     trace_headers = trace_settings,
+    tls_certificate = tls_options and tls_options.certificate or nil,
+    tls_private_key = tls_options and tls_options.private_key or nil,
   }
 
-  kumo.start_esmtp_listener {
-    listen = '0.0.0.0:465',
-    hostname = '`)
+  -- Port 465: SMTPS (Implicit TLS)
+  if tls_options then
+    kumo.start_esmtp_listener {
+      listen = '0.0.0.0:465',
+      hostname = '`)
 	b.WriteString(mainHostname)
 	b.WriteString(`',
-    banner = '220 ' .. '`)
+      banner = '220 ' .. '`)
 	b.WriteString(mainHostname)
 	b.WriteString(`',
-    relay_hosts = { `)
+      relay_hosts = { `)
 	b.WriteString(relayListStr)
 	b.WriteString(` },
-    trace_headers = trace_settings,
-  }
+      trace_headers = trace_settings,
+      tls_certificate = tls_options.certificate,
+      tls_private_key = tls_options.private_key,
+      tls_implicit = true,  -- Implicit TLS for port 465
+    }
+  end
 end)
 
 `)
@@ -301,10 +347,24 @@ end)
 	b.WriteString(`-- =====================================================
 -- SMTP AUTHENTICATION (PLAIN)
 -- =====================================================
+-- auth_users is loaded from auth.toml: { "user@domain.com" = "password" }
 kumo.on('smtp_server_auth_plain', function(auth_user, auth_password)
+  -- Handle empty or nil auth_users table
+  if not auth_users or type(auth_users) ~= 'table' then
+    kumo.log_error("SMTP AUTH: auth.toml not loaded or empty")
+    return false
+  end
+
   local valid_pass = auth_users[auth_user]
-  if valid_pass and valid_pass == auth_password then
-    return true
+  if valid_pass then
+    if valid_pass == auth_password then
+      kumo.log_info("SMTP AUTH: Success for " .. auth_user)
+      return true
+    else
+      kumo.log_error("SMTP AUTH: Invalid password for " .. auth_user)
+    end
+  else
+    kumo.log_error("SMTP AUTH: Unknown user " .. auth_user)
   end
   return false
 end)

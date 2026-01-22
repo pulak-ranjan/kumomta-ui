@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from "react";
-import { 
-  Save, 
-  Server, 
-  Globe, 
-  Network, 
-  Bot, 
-  Key, 
-  Loader2 
+import {
+  Save,
+  Server,
+  Globe,
+  Network,
+  Bot,
+  Key,
+  Loader2,
+  Lock,
+  FileKey
 } from "lucide-react";
 import { getSettings, saveSettings } from "../api";
 import { cn } from "../lib/utils";
@@ -16,6 +18,8 @@ export default function Settings() {
     main_hostname: "",
     main_server_ip: "",
     relay_ips: "",
+    tls_cert_path: "",
+    tls_key_path: "",
     ai_provider: "",
     ai_api_key: ""
   });
@@ -106,9 +110,48 @@ export default function Settings() {
                 className="w-full h-10 rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-ring"
                 placeholder="127.0.0.1, 10.0.0.5"
               />
-              <p className="text-[10px] text-muted-foreground">IPs allowed to relay through this MTA.</p>
+              <p className="text-[10px] text-muted-foreground">IPs allowed to relay through this MTA without authentication.</p>
             </div>
           </div>
+        </div>
+
+        {/* TLS/SSL Section */}
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold flex items-center gap-2 border-b pb-2">
+            <Lock className="w-5 h-5" /> TLS/SSL Configuration
+          </h3>
+          <p className="text-sm text-muted-foreground">Required for SMTP authentication on ports 587/465. Without TLS, AUTH will not work.</p>
+
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">TLS Certificate Path</label>
+              <div className="relative">
+                <FileKey className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <input
+                  name="tls_cert_path"
+                  value={form.tls_cert_path}
+                  onChange={onChange}
+                  className="w-full pl-9 h-10 rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-ring"
+                  placeholder="/etc/ssl/certs/mail.crt"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">TLS Private Key Path</label>
+              <div className="relative">
+                <Key className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <input
+                  name="tls_key_path"
+                  value={form.tls_key_path}
+                  onChange={onChange}
+                  className="w-full pl-9 h-10 rounded-md border bg-background px-3 text-sm focus:ring-2 focus:ring-ring"
+                  placeholder="/etc/ssl/private/mail.key"
+                />
+              </div>
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground">Use Let's Encrypt or your certificate provider. Common paths: /etc/letsencrypt/live/yourdomain/fullchain.pem and privkey.pem</p>
         </div>
 
         {/* AI Integration Section */}
