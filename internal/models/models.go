@@ -13,6 +13,10 @@ type AppSettings struct {
 	// NEW: Listener Binding (e.g., "127.0.0.1:25" or "0.0.0.0:25")
 	SMTPListenAddr string `json:"smtp_listen_addr"`
 
+	// TLS Certificate paths for SMTP AUTH
+	TLSCertPath string `json:"tls_cert_path"` // e.g., /etc/ssl/certs/mail.crt
+	TLSKeyPath  string `json:"tls_key_path"`  // e.g., /etc/ssl/private/mail.key
+
 	AIProvider string `json:"ai_provider"` // "openai", "deepseek"
 	AIAPIKey   string `json:"ai_api_key"`  // encrypted or blank
 

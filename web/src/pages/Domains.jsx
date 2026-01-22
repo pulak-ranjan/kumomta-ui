@@ -287,22 +287,48 @@ export default function Domains() {
               </h3>
               <button onClick={() => setShowInfo(false)}><X className="w-4 h-4" /></button>
             </div>
-            
+
             <div className="space-y-4 text-sm">
               <p className="text-muted-foreground">Use these settings to connect your email marketing software (e.g. MailWizz, Interspire) to this KumoMTA server.</p>
-              
+
               <div className="grid gap-3">
                 <div className="bg-muted/30 p-3 rounded-md border flex justify-between items-center">
                   <span className="font-medium">Hostname</span>
-                  <span className="font-mono bg-background px-2 py-1 rounded">mail.yourdomain.com</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono bg-background px-2 py-1 rounded">{settings?.main_hostname || settings?.main_server_ip || "Not configured"}</span>
+                    {(settings?.main_hostname || settings?.main_server_ip) && (
+                      <button onClick={() => copy(settings?.main_hostname || settings?.main_server_ip, 'smtp-host')} className="text-muted-foreground hover:text-primary">
+                        {copied === 'smtp-host' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="bg-muted/30 p-3 rounded-md border flex justify-between items-center">
-                  <span className="font-medium">Username</span>
-                  <span className="font-mono bg-background px-2 py-1 rounded text-muted-foreground">sender@yourdomain.com</span>
+                <div className="bg-muted/30 p-3 rounded-md border">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-medium">Username</span>
+                    <span className="text-xs text-muted-foreground">(Your sender email)</span>
+                  </div>
+                  {domains.flatMap(d => d.senders || []).length > 0 ? (
+                    <div className="space-y-1 max-h-24 overflow-y-auto">
+                      {domains.flatMap(d => d.senders || []).slice(0, 5).map((s, idx) => (
+                        <div key={idx} className="flex items-center justify-between bg-background px-2 py-1 rounded text-xs">
+                          <span className="font-mono">{s.email}</span>
+                          <button onClick={() => copy(s.email, `smtp-user-${idx}`)} className="text-muted-foreground hover:text-primary">
+                            {copied === `smtp-user-${idx}` ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      ))}
+                      {domains.flatMap(d => d.senders || []).length > 5 && (
+                        <div className="text-xs text-muted-foreground text-center">+{domains.flatMap(d => d.senders || []).length - 5} more senders...</div>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="font-mono bg-background px-2 py-1 rounded text-muted-foreground text-xs">No senders configured</span>
+                  )}
                 </div>
                 <div className="bg-muted/30 p-3 rounded-md border flex justify-between items-center">
                   <span className="font-medium">Password</span>
-                  <span className="font-mono bg-background px-2 py-1 rounded text-muted-foreground">(Set during creation)</span>
+                  <span className="font-mono bg-background px-2 py-1 rounded text-muted-foreground text-xs">Set in sender config</span>
                 </div>
               </div>
 
@@ -322,6 +348,10 @@ export default function Domains() {
                   <div className="text-xl font-bold text-primary">25</div>
                   <div className="text-[10px] text-muted-foreground">Unencrypted</div>
                 </div>
+              </div>
+
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-3 text-xs text-amber-600 dark:text-amber-400">
+                <strong>Important:</strong> After creating/updating senders, click "Apply Config" in the Config page to activate SMTP authentication.
               </div>
             </div>
 

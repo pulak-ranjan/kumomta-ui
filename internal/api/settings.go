@@ -13,6 +13,8 @@ type settingsDTO struct {
 	MainHostname string `json:"main_hostname"`
 	MainServerIP string `json:"main_server_ip"`
 	RelayIPs     string `json:"relay_ips"`
+	TLSCertPath  string `json:"tls_cert_path"`
+	TLSKeyPath   string `json:"tls_key_path"`
 	AIProvider   string `json:"ai_provider"`
 	AIAPIKey     string `json:"ai_api_key,omitempty"`
 }
@@ -34,6 +36,8 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		MainHostname: st.MainHostname,
 		MainServerIP: st.MainServerIP,
 		RelayIPs:     st.MailWizzIP,
+		TLSCertPath:  st.TLSCertPath,
+		TLSKeyPath:   st.TLSKeyPath,
 		AIProvider:   st.AIProvider,
 		// AIAPIKey intentionally omitted - write-only
 	})
@@ -60,6 +64,8 @@ func (s *Server) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 	existing.MainHostname = dto.MainHostname
 	existing.MainServerIP = dto.MainServerIP
 	existing.MailWizzIP = dto.RelayIPs
+	existing.TLSCertPath = dto.TLSCertPath
+	existing.TLSKeyPath = dto.TLSKeyPath
 	existing.AIProvider = dto.AIProvider
 
 	if dto.AIAPIKey != "" {
