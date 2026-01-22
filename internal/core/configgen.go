@@ -347,29 +347,24 @@ end)
 	b.WriteString(`-- =====================================================
 -- SMTP AUTHENTICATION (PLAIN)
 -- =====================================================
--- KumoMTA passes 3 parameters to smtp_server_auth_plain:
---   authzid: authorization identity (who to act as)
---   authcid: authentication identity (who is authenticating)
---   password: the password
 -- auth_users is loaded from auth.toml: { "user@domain.com" = "password" }
-kumo.on('smtp_server_auth_plain', function(authzid, authcid, password)
+kumo.on('smtp_server_auth_plain', function(auth_user, auth_password)
   -- Handle empty or nil auth_users table
   if not auth_users or type(auth_users) ~= 'table' then
     kumo.log_error("SMTP AUTH: auth.toml not loaded or empty")
     return false
   end
 
-  -- Look up password by authcid (the authenticating user)
-  local valid_pass = auth_users[authcid]
+  local valid_pass = auth_users[auth_user]
   if valid_pass then
-    if valid_pass == password then
-      kumo.log_info("SMTP AUTH: Success for " .. authcid)
+    if valid_pass == auth_password then
+      kumo.log_info("SMTP AUTH: Success for " .. auth_user)
       return true
     else
-      kumo.log_error("SMTP AUTH: Invalid password for " .. authcid)
+      kumo.log_error("SMTP AUTH: Invalid password for " .. auth_user)
     end
   else
-    kumo.log_error("SMTP AUTH: Unknown user " .. authcid)
+    kumo.log_error("SMTP AUTH: Unknown user " .. auth_user)
   end
   return false
 end)
