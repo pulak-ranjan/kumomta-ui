@@ -394,6 +394,17 @@ end
 -- LISTENER DOMAIN CONFIG
 -- =====================================================
 kumo.on('get_listener_domain', function(domain, listener, conn_meta)
+  -- Allow relay for authenticated connections
+  local authz_id = conn_meta:get_meta('authz_id')
+  if authz_id then
+    return kumo.make_listener_domain {
+      relay_to = true,
+      log_oob = true,
+      log_arf = true,
+    }
+  end
+
+  -- Check configured listener domains
   if listener_domains[domain] then
     local config = listener_domains[domain]
     return kumo.make_listener_domain {
