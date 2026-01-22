@@ -347,24 +347,29 @@ end)
 	b.WriteString(`-- =====================================================
 -- SMTP AUTHENTICATION (PLAIN)
 -- =====================================================
+-- KumoMTA passes 3 parameters to smtp_server_auth_plain:
+--   authzid: authorization identity (who to act as)
+--   authcid: authentication identity (who is authenticating)
+--   password: the password
 -- auth_users is loaded from auth.toml: { "user@domain.com" = "password" }
-kumo.on('smtp_server_auth_plain', function(auth_user, auth_password)
+kumo.on('smtp_server_auth_plain', function(authzid, authcid, password)
   -- Handle empty or nil auth_users table
   if not auth_users or type(auth_users) ~= 'table' then
     kumo.log_error("SMTP AUTH: auth.toml not loaded or empty")
     return false
   end
 
-  local valid_pass = auth_users[auth_user]
+  -- Look up password by authcid (the authenticating user)
+  local valid_pass = auth_users[authcid]
   if valid_pass then
-    if valid_pass == auth_password then
-      kumo.log_info("SMTP AUTH: Success for " .. auth_user)
+    if valid_pass == password then
+      kumo.log_info("SMTP AUTH: Success for " .. authcid)
       return true
     else
-      kumo.log_error("SMTP AUTH: Invalid password for " .. auth_user)
+      kumo.log_error("SMTP AUTH: Invalid password for " .. authcid)
     end
   else
-    kumo.log_error("SMTP AUTH: Unknown user " .. auth_user)
+    kumo.log_error("SMTP AUTH: Unknown user " .. authcid)
   end
   return false
 end)
@@ -394,6 +399,17 @@ end
 -- LISTENER DOMAIN CONFIG
 -- =====================================================
 kumo.on('get_listener_domain', function(domain, listener, conn_meta)
+  -- Allow relay for authenticated connections
+  local authz_id = conn_meta:get_meta('authz_id')
+  if authz_id then
+    return kumo.make_listener_domain {
+      relay_to = true,
+      log_oob = true,
+      log_arf = true,
+    }
+  end
+
+  -- Check configured listener domains
   if listener_domains[domain] then
     local config = listener_domains[domain]
     return kumo.make_listener_domain {
