@@ -6,13 +6,14 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"time" // <--- 1. ADD THIS IMPORT
 
 	"github.com/pulak-ranjan/kumomta-ui/internal/models"
 )
 
 type testEmailRequest struct {
-	SenderEmail string `json:"sender"`    // e.g. editor@domain.com
-	Recipient   string `json:"recipient"` // e.g. mailtester@...
+	SenderEmail string `json:"sender"`
+	Recipient   string `json:"recipient"`
 	Subject     string `json:"subject"`
 	Body        string `json:"body"`
 }
@@ -30,23 +31,26 @@ func (s *Server) handleSendTestEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. DYNAMIC LOOKUP: Find the sender in the database to get real config
+	// 1. DYNAMIC LOOKUP
 	var sender models.Sender
 	if err := s.Store.DB.Preload("Domain").Where("email = ?", req.SenderEmail).First(&sender).Error; err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("Sender '%s' not found in KumoMTA UI. Please add it to Domains first.", req.SenderEmail),
+			"error": fmt.Sprintf("Sender '%s' not found. Please add to Domains first.", req.SenderEmail),
 		})
 		return
 	}
 
-	// 2. CONSTRUCT HELO: Use the configured naming convention
-	helo := fmt.Sprintf("mail.%s", sender.Domain.Name) 
+	// 2. CONSTRUCT HELO
+	helo := fmt.Sprintf("mail.%s", sender.Domain.Name)
 	if sender.LocalPart != "" {
 		helo = fmt.Sprintf("%s.%s", sender.LocalPart, sender.Domain.Name)
 	}
 
-	// 3. EXECUTE SWAKS
-	// We connect to localhost:25. KumoMTA's init.lua uses the 'MAIL FROM' to map to the correct source IP.
+	// 3. GENERATE VALID MESSAGE-ID
+	// Format: <timestamp.nanoseconds@domain.com>
+	msgID := fmt.Sprintf("<%d.%s@%s>", time.Now().Unix(), "test", sender.Domain.Name)
+
+	// 4. EXECUTE SWAKS
 	args := []string{
 		"--to", req.Recipient,
 		"--from", sender.Email,
@@ -54,20 +58,22 @@ func (s *Server) handleSendTestEmail(w http.ResponseWriter, r *http.Request) {
 		"--port", "25",
 		"--helo", helo,
 		"--header", "Subject: " + req.Subject,
-		"--header", "X-Kumo-Test: True", // Header to identify test traffic
+		"--header", "Message-Id: " + msgID, // <--- 2. PASS EXPLICIT ID HERE
+		"--header", "X-Kumo-Test: True",
 		"--body", req.Body,
 		"--hide-all",
 	}
 
 	cmdStr := fmt.Sprintf("swaks %s", strings.Join(args, " "))
-	
+
 	cmd := exec.Command("swaks", args...)
 	output, err := cmd.CombinedOutput()
 
 	response := map[string]string{
 		"status":      "sent",
-		"sender_ip":   sender.IP, // The IP KumoMTA *should* use (for verification)
+		"sender_ip":   sender.IP,
 		"used_helo":   helo,
+		"message_id":  msgID, // (Optional) Return ID in response for debugging
 		"smtp_output": string(output),
 		"command":     cmdStr,
 	}
