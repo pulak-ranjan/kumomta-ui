@@ -471,51 +471,50 @@ end)
 -- ISP TRAFFIC SHAPING
 -- =====================================================
 -- Conservative limits per destination ISP to protect reputation
-local isp_limits = {
-  ['gmail.com'] = {
-    max_message_rate = '50/h',
-    max_connection_rate = '5/min',
-    max_deliveries_per_connection = 20,
-    connection_limit = 3,
-  },
-  ['google.com'] = {
-    max_message_rate = '50/h',
-    max_connection_rate = '5/min',
-    max_deliveries_per_connection = 20,
-    connection_limit = 3,
-  },
-  ['outlook.com'] = {
-    max_message_rate = '50/h',
-    max_connection_rate = '3/min',
-    max_deliveries_per_connection = 10,
-    connection_limit = 2,
-  },
-  ['hotmail.com'] = {
-    max_message_rate = '50/h',
-    max_connection_rate = '3/min',
-    max_deliveries_per_connection = 10,
-    connection_limit = 2,
-  },
-  ['yahoo.com'] = {
-    max_message_rate = '100/h',
-    max_connection_rate = '5/min',
-    max_deliveries_per_connection = 20,
-    connection_limit = 3,
-  },
-  ['aol.com'] = {
-    max_message_rate = '100/h',
-    max_connection_rate = '5/min',
-    max_deliveries_per_connection = 20,
-    connection_limit = 3,
-  },
+-- Keys are substrings matched against MX hostnames (site_name),
+-- NOT recipient domains.
+-- Gmail MX: gmail-smtp-in.l.google.com -> matches 'google.com'
+-- Outlook MX: *.protection.outlook.com -> matches 'outlook.com'
+-- Yahoo MX: *.yahoodns.net -> matches 'yahoodns.net'
+local google_limits = {
+  max_message_rate = '50/h',
+  max_connection_rate = '5/min',
+  max_deliveries_per_connection = 20,
+  connection_limit = 3,
+}
+local microsoft_limits = {
+  max_message_rate = '50/h',
+  max_connection_rate = '3/min',
+  max_deliveries_per_connection = 10,
+  connection_limit = 2,
+}
+local yahoo_limits = {
+  max_message_rate = '100/h',
+  max_connection_rate = '5/min',
+  max_deliveries_per_connection = 20,
+  connection_limit = 3,
 }
 
--- Match site_name to ISP limits (site_name contains MX domain)
+-- Patterns matched against site_name (MX hostname)
+local isp_patterns = {
+  { pattern = 'google.com',     limits = google_limits },
+  { pattern = 'google.co.',     limits = google_limits },
+  { pattern = 'googlemail.com', limits = google_limits },
+  { pattern = 'outlook.com',    limits = microsoft_limits },
+  { pattern = 'hotmail.com',    limits = microsoft_limits },
+  { pattern = 'live.com',       limits = microsoft_limits },
+  { pattern = 'office365.com',  limits = microsoft_limits },
+  { pattern = 'yahoodns.net',   limits = yahoo_limits },
+  { pattern = 'yahoo.com',      limits = yahoo_limits },
+  { pattern = 'aol.com',        limits = yahoo_limits },
+}
+
+-- Match site_name (MX hostname) to ISP limits
 local function get_isp_limit(site_name)
   local sn = site_name:lower()
-  for isp, limits in pairs(isp_limits) do
-    if sn:find(isp, 1, true) then
-      return limits
+  for _, entry in ipairs(isp_patterns) do
+    if sn:find(entry.pattern, 1, true) then
+      return entry.limits
     end
   end
   return nil
