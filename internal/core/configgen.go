@@ -101,7 +101,7 @@ func GenerateQueuesTOML(snap *Snapshot) string {
 
 			fmt.Fprintf(&b, "[\"%s\"]\n", tenantKey)
 			fmt.Fprintf(&b, "egress_pool = \"%s\"\n", pool)
-			fmt.Fprintf(&b, "retry_interval = \"1m\"\n")
+			fmt.Fprintf(&b, "retry_interval = \"5m\"\n")
 			fmt.Fprintf(&b, "max_age = \"3d\"\n")
 
 			rate := GetSenderRate(s)
@@ -120,11 +120,30 @@ func GenerateQueuesTOML(snap *Snapshot) string {
 
 func GenerateListenerDomainsTOML(snap *Snapshot) string {
 	var b strings.Builder
+	seen := make(map[string]bool)
+
 	for _, d := range snap.Domains {
-		fmt.Fprintf(&b, "[\"%s\"]\n", d.Name)
-		fmt.Fprintf(&b, "relay_to = true\n")
-		fmt.Fprintf(&b, "log_oob = true\n")
-		fmt.Fprintf(&b, "log_arf = true\n\n")
+		// Add the main domain
+		if !seen[d.Name] {
+			seen[d.Name] = true
+			fmt.Fprintf(&b, "[\"%s\"]\n", d.Name)
+			fmt.Fprintf(&b, "relay_to = true\n")
+			fmt.Fprintf(&b, "log_oob = true\n")
+			fmt.Fprintf(&b, "log_arf = true\n\n")
+		}
+
+		// Add sender subdomains (e.g., a1.domain.com for sender a1@domain.com)
+		// These are needed for envelope-from bounce handling
+		for _, s := range d.Senders {
+			subdomain := fmt.Sprintf("%s.%s", s.LocalPart, d.Name)
+			if !seen[subdomain] {
+				seen[subdomain] = true
+				fmt.Fprintf(&b, "[\"%s\"]\n", subdomain)
+				fmt.Fprintf(&b, "relay_to = true\n")
+				fmt.Fprintf(&b, "log_oob = true\n")
+				fmt.Fprintf(&b, "log_arf = true\n\n")
+			}
+		}
 	}
 	return b.String()
 }
@@ -148,7 +167,7 @@ func GenerateDKIMDataTOML(snap *Snapshot, dkimBasePath string) string {
 		fmt.Fprintf(&b, "[domain.\"%s\"]\n", d.Name)
 		fmt.Fprintf(&b, "selector = \"default\"\n")
 		// DO NOT include X- headers here, or scrubbing them will break the signature
-		fmt.Fprintf(&b, "headers = [\"From\", \"To\", \"Subject\", \"Date\", \"Message-ID\", \"List-Unsubscribe\"]\n\n")
+		fmt.Fprintf(&b, "headers = [\"From\", \"To\", \"Subject\", \"Date\", \"Message-ID\", \"List-Unsubscribe\", \"List-Unsubscribe-Post\"]\n\n")
 
 		for _, s := range d.Senders {
 			selector := s.LocalPart
@@ -449,10 +468,80 @@ kumo.on('get_egress_source', function(source_name)
   return kumo.make_egress_source { name = source_name }
 end)
 
+-- =====================================================
+-- ISP TRAFFIC SHAPING
+-- =====================================================
+-- Conservative limits per destination ISP to protect reputation
+local isp_limits = {
+  ['gmail.com'] = {
+    max_message_rate = '50/h',
+    max_connection_rate = '5/min',
+    max_deliveries_per_connection = 20,
+    connection_limit = 3,
+  },
+  ['google.com'] = {
+    max_message_rate = '50/h',
+    max_connection_rate = '5/min',
+    max_deliveries_per_connection = 20,
+    connection_limit = 3,
+  },
+  ['outlook.com'] = {
+    max_message_rate = '50/h',
+    max_connection_rate = '3/min',
+    max_deliveries_per_connection = 10,
+    connection_limit = 2,
+  },
+  ['hotmail.com'] = {
+    max_message_rate = '50/h',
+    max_connection_rate = '3/min',
+    max_deliveries_per_connection = 10,
+    connection_limit = 2,
+  },
+  ['yahoo.com'] = {
+    max_message_rate = '100/h',
+    max_connection_rate = '5/min',
+    max_deliveries_per_connection = 20,
+    connection_limit = 3,
+  },
+  ['aol.com'] = {
+    max_message_rate = '100/h',
+    max_connection_rate = '5/min',
+    max_deliveries_per_connection = 20,
+    connection_limit = 3,
+  },
+}
+
+-- Match site_name to ISP limits (site_name contains MX domain)
+local function get_isp_limit(site_name)
+  local sn = site_name:lower()
+  for isp, limits in pairs(isp_limits) do
+    if sn:find(isp, 1, true) then
+      return limits
+    end
+  end
+  return nil
+end
+
 kumo.on('get_egress_path_config', function(domain, egress_source, site_name)
+  local limits = get_isp_limit(site_name)
+  if limits then
+    return kumo.make_egress_path {
+      enable_tls = 'OpportunisticInsecure',
+      enable_mta_sts = false,
+      max_message_rate = limits.max_message_rate,
+      max_connection_rate = limits.max_connection_rate,
+      max_deliveries_per_connection = limits.max_deliveries_per_connection,
+      connection_limit = limits.connection_limit,
+    }
+  end
+
+  -- Default: no ISP-specific limits
   return kumo.make_egress_path {
     enable_tls = 'OpportunisticInsecure',
     enable_mta_sts = false,
+    max_connection_rate = '10/min',
+    max_deliveries_per_connection = 50,
+    connection_limit = 5,
   }
 end)
 
@@ -464,7 +553,7 @@ kumo.on('get_queue_config', function(domain, tenant, campaign, routing_domain)
   local cfg = queues_data['tenant:' .. tenant] or {}
   return kumo.make_queue_config {
     egress_pool = cfg.egress_pool or tenant,
-    retry_interval = cfg.retry_interval or '1m',
+    retry_interval = cfg.retry_interval or '5m',
     max_age = cfg.max_age or '3d',
     max_message_rate = cfg.max_message_rate,
   }
@@ -532,6 +621,24 @@ local function scrub_headers(msg)
 end
 
 -- =====================================================
+-- ENVELOPE-FROM SEPARATION
+-- =====================================================
+-- Header-From: a1@domain.com (what the recipient sees)
+-- Envelope-From: a1@a1.domain.com (used for bounces, SPF)
+-- This separates bounce handling per sender identity
+local function set_envelope_from(msg)
+  local sender = msg:from_header()
+  if not sender then return end
+
+  local localpart = sender.email:match("([^@]+)@")
+  local domain = sender.domain
+  if localpart and domain then
+    local envelope = string.format('%s@%s.%s', localpart, localpart, domain)
+    msg:set_sender(envelope)
+  end
+end
+
+-- =====================================================
 -- SMTP PATH
 -- =====================================================
 kumo.on('smtp_server_message_received', function(msg)
@@ -543,6 +650,9 @@ kumo.on('smtp_server_message_received', function(msg)
 
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
+
+  -- Set envelope-from for bounce separation
+  set_envelope_from(msg)
 
   scrub_headers(msg)
   dkim_sign_message(msg)
@@ -562,6 +672,9 @@ kumo.on('http_message_generated', function(msg)
 
   local campaign = msg:get_first_named_header_value('X-Campaign')
   if campaign then msg:set_meta('campaign', campaign) end
+
+  -- Set envelope-from for bounce separation
+  set_envelope_from(msg)
 
   scrub_headers(msg)
   dkim_sign_message(msg)
