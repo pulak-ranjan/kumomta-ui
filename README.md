@@ -1,6 +1,6 @@
 # KumoMTA UI
 
-![Version](https://img.shields.io/badge/version-2.1.0-blue.svg) ![License](https://img.shields.io/badge/license-Apache%202.0-green.svg) ![Status](https://img.shields.io/badge/status-production--ready-purple.svg)
+![Version](https://img.shields.io/badge/version-2.2.0-blue.svg) ![License](https://img.shields.io/badge/license-Apache%202.0-green.svg) ![Status](https://img.shields.io/badge/status-production--ready-purple.svg)
 
 A modern, mobile-responsive control panel for KumoMTA. Manage domains, monitor queues, rotate IPs, and secure your infrastructure with a beautiful React frontend and a robust Go backend.
 
@@ -25,6 +25,13 @@ A modern, mobile-responsive control panel for KumoMTA. Manage domains, monitor q
 - **IP Inventory:** Track and rotate server IPs easily.
 - **Queue Management:** Flush queues, delete messages, and view granular status.
 - **Config Generator:** Auto-generate `init.lua`, `sources.toml`, and more.
+
+### 📬 Deliverability Engine (v2.2)
+- **Envelope-From Separation:** Automatic per-sender bounce isolation (`a1@a1.domain.com`).
+- **ISP Traffic Shaping:** Built-in rate limits for Gmail, Microsoft, Yahoo to prevent throttling.
+- **SMTP Auth (3-Param):** Correct `smtp_server_auth_plain` with TLS on ports 25/587/465.
+- **DKIM Identity Signing:** Per-sender selectors with `List-Unsubscribe-Post` support.
+- **Header Scrubbing:** Removes fingerprinting headers, injects clean Received headers.
 
 ### 🔔 Automation & Alerts
 - **Webhooks:** Native integration with **Slack** and **Discord**.
@@ -111,6 +118,19 @@ npm run build
 export DB_DIR=/var/lib/kumomta-ui
 ./kumomta-ui-server
 ```
+
+---
+
+## 📖 Documentation
+
+| Document | Description |
+|----------|-------------|
+| [DNS Setup Guide](docs/DNS-SETUP.md) | Complete DNS configuration — SPF, DKIM, DMARC, sender subdomains, PTR records |
+| [Deliverability Guide](docs/DELIVERABILITY.md) | Envelope-from separation, ISP shaping, bounce management, warmup, SMTP client setup |
+| [API Reference](docs/API.md) | Full REST API documentation for all endpoints |
+| [Changelog](docs/CHANGELOG.md) | Version history and release notes |
+| [Security Policy](docs/SECURITY.md) | Security features, deployment recommendations, vulnerability reporting |
+| [Contributing](docs/CONTRIBUTING.md) | Development setup, code style, PR process |
 
 ---
 
